@@ -1,0 +1,11 @@
+streamlit
+streamlit-folium
+dotenv
+folium
+geopandas
+shapely
+numpy
+pandas
+streamlit-scroll-to-top
+streamlit-option-menu
+
