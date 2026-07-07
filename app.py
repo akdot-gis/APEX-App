@@ -9,8 +9,6 @@ from util.container_util import (
     section_markdown
 )
 
-
-
 # ---------------------------------------------------------
 # Public helper: other modules call this to navigate back
 # ---------------------------------------------------------
