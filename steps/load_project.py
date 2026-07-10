@@ -1,27 +1,41 @@
+"""APEX project upload workflow for the Loader Application.
+
+This module uploads the current Streamlit session's project data and related
+records into APEX. It coordinates project creation, geometry, geography,
+communities, locations, traffic impacts, AASHTOWare updates, failure tracking,
+cleanup messaging, and post-upload navigation.
+
+Existing behavior, Streamlit UI text, labels, messages, button text, field
+names, variable names, function names, session state key names, imports, and
+logic are preserved.
+"""
+
 from __future__ import annotations
+
 import streamlit as st
+
 from agol.agol_util import AGOLDataLoader, format_guid, delete_cascade_by_globalid
 from agol.agol_payloads import (
-    communities_payload,
     geography_payload,
     geometry_payload,
     project_payload,
     location_payload,
     parent_traffic_impact_payload,
     child_traffic_impact_payload,
-    awp_apex_update_payload
+    awp_apex_update_payload,
 )
 
-# -----------------------------------------------------------------------------
-# Helper: record a structured failure with step name and message
-# -----------------------------------------------------------------------------
+# =============================================================================
+# Failure Tracking Helpers
+# =============================================================================
 def _record_failure(step: str, message: str) -> None:
+    """Record a structured upload failure message for the provided workflow step."""
     st.session_state.setdefault("step_failures", [])
     st.session_state["step_failures"].append({"step": step, "message": str(message)})
 
-# -----------------------------------------------------------------------------
-# OPTIONAL trigger helpers (use from your button code if you want explicit arming)
-# -----------------------------------------------------------------------------
+# =============================================================================
+# One-Shot Loader Trigger Helpers
+# =============================================================================
 def request_load_project_once() -> None:
     """
     Arm the loader to run exactly once on the next rerun.
@@ -44,6 +58,10 @@ def reset_load_project_state() -> None:
         st.session_state.pop(k, None)
 
 
+# =============================================================================
+# Main APEX Upload Workflow
+# =============================================================================
+
 def load_project_apex() -> None:
     """
     Upload the current Streamlit session's project and related records into APEX.
@@ -56,6 +74,15 @@ def load_project_apex() -> None:
 
     Returns: None (UI + st.session_state side effects only).
     """
+
+    # -------------------------------------------------------------------------
+    # Session State Read Review
+    # -------------------------------------------------------------------------
+    # Session state values are intentionally read near their point of use in this
+    # workflow. The upload process mutates many of these keys during the same
+    # Streamlit run, so centralizing reads at the top could make values stale and
+    # change behavior. Existing assignments, defaults, and state mutations are
+    # preserved exactly as part of the upload workflow.
 
     # -------------------------------------------------------------------------
     # 0) One-shot suppression (respected by your return_navigation flow)
@@ -119,8 +146,9 @@ def load_project_apex() -> None:
     st.session_state["__load_project_lock__"] = True
     st.session_state["__load_project_has_executed__"] = True
 
+
+    # Set empty container and fill UI below
     try:
-        # ====================== original function continues below =====================
         spinner_container = st.empty()
 
         # -------------------------------------------------------------------------
@@ -153,7 +181,7 @@ def load_project_apex() -> None:
         st.success("LOAD PROJECT: SUCCESS ✅")
 
         # -------------------------------------------------------------------------
-        # STEP 2: UPLOAD GEOMETRY (MAY BE MULTIPLE GEOMETRIES)
+        # STEP 2: UPLOAD GEOMETRY
         # -------------------------------------------------------------------------
         with spinner_container, st.spinner("Loading Project Geometry to APEX..."):
             failures = []
@@ -208,7 +236,7 @@ def load_project_apex() -> None:
                 st.error(f"• {msg}")
 
         # -------------------------------------------------------------------------
-        # STEP 3: UPLOAD GEOGRAPHY (OPTIONAL; GATED BY SESSION_STATE LIST PRESENCE)
+        # STEP 3: UPLOAD GEOGRAPHY
         # -------------------------------------------------------------------------
         with spinner_container, st.spinner("Loading Geography to APEX..."):
             geography_layers = {
@@ -265,7 +293,7 @@ def load_project_apex() -> None:
         # -------------------------------------------------------------------------
         try:
             payload_location = location_payload()
-            location_layer = st.session_state.get("locations_layer")  # adjust if needed
+            location_layer = st.session_state.get("locations_layer")
             if payload_location is None:
                 load_location = None
             else:
@@ -287,7 +315,7 @@ def load_project_apex() -> None:
             _record_failure("Location Apex", f"Location payload error: {e}")
             load_location = {"success": False, "message": f"Location payload error: {e}"}
 
-        # (OPTIONAL) record this step in diagnostics
+        # Record this step in diagnostics
         st.session_state["step6_uploads"] = {
             "location": load_location if "load_location" in locals() else None,
         }
@@ -363,9 +391,6 @@ def load_project_apex() -> None:
         # STEP 6 (SILENT): UPDATE AWP APEX CONNECTOR
         # -------------------------------------------------------------------------
         if st.session_state['is_awp']:
-            
-            awp_result = None
-
             try:
                 # Set URL and Layer
                 awp_apex_url = st.session_state.get("awp_url")

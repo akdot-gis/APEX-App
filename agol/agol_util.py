@@ -1329,16 +1329,37 @@ class AGOLDataLoader:
         Delete features from the AGOL feature layer using applyEdits.
 
         Behavior:
-            - Expects payload["updates"] in the same style as update_features()
-            - Extracts all OBJECTIDs from attributes
-            - Sends them as a comma-separated string to applyEdits 'deletes'
+            - Accepts a standard delete payload shaped as {"deletes": [oid, oid, ...]}
+            - Also supports the legacy update-shaped payload {"updates": [{"attributes": {"OBJECTID": ...}}]}
+            - Sends the resolved OBJECTIDs as a comma-separated string to applyEdits 'deletes'
             - Returns a consistent { success, message, objectids } structure
         """
 
-        # Validate payload shape
-        if "updates" not in payload or not isinstance(payload["updates"], list):
+        if isinstance(payload, dict) and isinstance(payload.get("deletes"), list):
+            delete_entries = payload["deletes"]
+            objectids = []
+            for entry in delete_entries:
+                if isinstance(entry, dict):
+                    oid = entry.get("OBJECTID")
+                    if oid is None:
+                        oid = entry.get("objectid")
+                    if oid is None:
+                        oid = entry.get("objectId")
+                    if oid is not None:
+                        objectids.append(str(oid))
+                elif entry is not None:
+                    objectids.append(str(entry))
+        elif isinstance(payload, dict) and isinstance(payload.get("updates"), list):
+            updates = payload["updates"]
+            objectids = []
+            for entry in updates:
+                attrs = entry.get("attributes", {})
+                oid = attrs.get("OBJECTID")
+                if oid is not None:
+                    objectids.append(str(oid))
+        else:
             self.success = False
-            self.message = "Payload must contain a list under key 'updates'."
+            self.message = "Delete payload must contain a list under key 'deletes'."
             self.logger.error(self.message)
             return {
                 "success": self.success,
@@ -1346,19 +1367,9 @@ class AGOLDataLoader:
                 "objectids": []
             }
 
-        updates = payload["updates"]
-
-        # Collect OBJECTIDs from all update entries
-        objectids = []
-        for entry in updates:
-            attrs = entry.get("attributes", {})
-            oid = attrs.get("OBJECTID")
-            if oid is not None:
-                objectids.append(str(oid))
-
         if not objectids:
             self.success = False
-            self.message = "No OBJECTIDs found in payload['updates'] for deletion."
+            self.message = "No OBJECTIDs found in delete payload for deletion."
             self.logger.error(self.message)
             return {
                 "success": self.success,

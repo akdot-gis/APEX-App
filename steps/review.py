@@ -1,18 +1,34 @@
-# review.py
+"""Review page for the APEX Loader Application.
+
+This module renders the project review page used before final upload. It shows
+project details, footprint mapping, funding information, descriptive text,
+contact information, web links, and geography values from the current
+Streamlit session state.
+
+Existing behavior, Streamlit UI text, labels, messages, button text, help text,
+field names, variable names, function names, session state key names, imports,
+and logic are preserved.
+"""
+
+import folium
 import streamlit as st
 from streamlit_folium import st_folium
-import folium
+
 from util.map_util import (
-    set_bounds_point, set_bounds_route, set_bounds_boundary,
-    set_zoom, set_center, geometry_to_folium
+    geometry_to_folium,
+    set_bounds_boundary,
+    set_bounds_point,
+    set_bounds_route,
+    set_center,
+    set_zoom,
 )
 
-# ----------------------------------------------------------------------
-# Navigation helpers
-# ----------------------------------------------------------------------
+# =============================================================================
+# Navigation Helpers
+# =============================================================================
 def goto_step(target_step: int):
     """Set the wizard step (loader_step) and rerun immediately."""
-    st.session_state["loader_step"] = target_step          # ✅ use the app's key
+    st.session_state["loader_step"] = target_step
     st.session_state["scroll_to_top"] = True
     st.rerun()
 
@@ -26,16 +42,26 @@ def header_with_edit(title: str, target_step: int, *, help: str = None):
     with right:
         is_clicked = st.button("⬅️ JUMP TO SECTION", help=help, key=f"edit_{target_step}")
         if is_clicked:
-            goto_step(target_step)                         # ✅ ensure rerun + correct key
+            goto_step(target_step)                         
 
-# ----------------------------------------------------------------------
-# Review page
-# ----------------------------------------------------------------------
+# =============================================================================
+# Review Page
+# =============================================================================
 def review_information():
     """
     Render the review page with section headers and edit buttons.
     """
-    # --- Project Name ---
+    # -------------------------------------------------------------------------
+    # Session State Read Review
+    # -------------------------------------------------------------------------
+    # Session state values are intentionally read near their point of use in this
+    # review page. The displayed review sections pull the latest values from the
+    # active Streamlit session, and centralizing these reads could make displayed
+    # values stale if upstream steps update state before this page renders.
+
+    # -------------------------------------------------------------------------
+    # Project Name
+    # -------------------------------------------------------------------------
     project_name = st.session_state.get("proj_name", "")
     awp_proj_name = st.session_state.get("awp_proj_name", "—")
     display_name = project_name if project_name else awp_proj_name
@@ -43,7 +69,9 @@ def review_information():
 #### {display_name}
     """, unsafe_allow_html=True)
 
-    # --- Map of Location ---
+    # -------------------------------------------------------------------------
+    # Map of Location
+    # -------------------------------------------------------------------------
     header_with_edit("PROJECT FOOTPRINT", target_step=3, help="Edit Project Loaction")
 
     if "selected_point" in st.session_state and st.session_state["selected_point"]:
@@ -164,7 +192,9 @@ def review_information():
         col1.markdown(f"**Tenative Advertise Date:** {st.session_state.get('tenadd','')}")
 
 
+    # -------------------------------------------------------------------------
     # Narrative
+    # -------------------------------------------------------------------------
     with st.expander("Description", expanded=True):
         
         if st.session_state.get("current_option") == "AASHTOWare Database":
@@ -175,7 +205,9 @@ def review_information():
             st.markdown(f"**Public Project Description:**\n\n{st.session_state.get('proj_desc','')}")
 
 
+    # -------------------------------------------------------------------------
     # Contact
+    # -------------------------------------------------------------------------
     with st.expander("Contact", expanded=True):
         st.markdown(f"**Name:** {st.session_state.get('contact_name','—')}")
         col1, col2 = st.columns(2)
@@ -184,13 +216,17 @@ def review_information():
         with col2:
             st.markdown(f"**Phone:** {st.session_state.get('contact_phone','—')}")
 
+    # -------------------------------------------------------------------------
     # Web Links
+    # -------------------------------------------------------------------------
     with st.expander("Web Links", expanded=True):
         st.markdown(f"**Project Website:** {st.session_state.get('proj_web','—')}")
         
 
     
+    # -------------------------------------------------------------------------
     # Geography
+    # -------------------------------------------------------------------------
     with st.expander("Geography", expanded=True):
         col1, col2 = st.columns(2)
         col1.markdown(f"**House Districts:** {st.session_state.get('house_string','')}")

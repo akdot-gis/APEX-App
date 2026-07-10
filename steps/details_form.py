@@ -1,42 +1,36 @@
-# =============================================================================
-# PROJECT DETAILS FORM (STREAMLIT)
-# =============================================================================
-# Purpose:
-# Renders a two-mode project details form:
-# 1) AASHTOWare Database (read-only display of values pulled into session_state)
-# 2) User Input (editable Streamlit widgets)
-# Key behaviors:
-# - Source-specific widget keys to prevent value bleed between AWP vs UI
-# - Read-only “widgets” rendered via HTML/CSS while still persisting values
-# - Per-source snapshot persistence for navigation and switching modes
-# - Impacted communities selection persisted per source and mirrored for legacy usage
-# - ✅ Submit button auto-resets to "SUBMIT FOOTPRINT" when:
-#   * switching modes (AASHTOWare <-> User Input)
-#   * choosing a different AASHTOWare project
-#   * any form field changes
-# - NEW: If st.session_state['set_year'] is provided (from URL), auto-select that
-#   year in the Construction Year widget (when valid) and show an info
-#   message if it's not in the global list of construction years.
-# =============================================================================
-import streamlit as st
+"""Project details form for the APEX Loader Application.
+
+This module renders the two-mode project details form used in the Streamlit
+loader workflow:
+
+1. AASHTOWare Database, which displays values pulled into session state through
+   read-only controls.
+2. User Input, which renders editable Streamlit widgets for manually entered
+   project information.
+
+The file preserves existing behavior for source-specific widget keys,
+read-only display persistence, per-source snapshots, impacted community
+selection, construction year preselection, and dirty-state reset behavior.
+"""
+
 import datetime
-from agol.agol_util import get_multiple_fields, select_record, aashtoware_geometry
-from util.read_only_util import ro_widget
+
+import streamlit as st
+
+from agol.agol_util import aashtoware_geometry
 from util.aashtoware_util import aashtoware_project
 from util.input_util import (
+    fmt_agol_date,
     fmt_currency,
     fmt_date,
     fmt_date_or_none,
     fmt_int,
     fmt_int_or_none,
     fmt_string,
-    fmt_agol_date,
-    widget_key
+    widget_key,
 )
-from util.streamlit_util import (
-    session_selectbox,
-    impacted_comms_select
-)
+from util.read_only_util import ro_widget
+from util.streamlit_util import session_selectbox
 
 
 
@@ -96,7 +90,7 @@ _PERSISTED_KEYS = [
 
     # ✅ Persist the user's last-selected year so defaults never "flip/flop"
     "__cy_user",
-]  # ← earlier addition (kept)  [1](https://mbakerintl-my.sharepoint.com/personal/charles_ross_mbakerintl_com/Documents/Microsoft%20Copilot%20Chat%20Files/details_form.py)
+]
 
 _SOURCE_SNAPSHOT_KEY = {
     "AASHTOWare Database": "saved_awp",
@@ -104,12 +98,14 @@ _SOURCE_SNAPSHOT_KEY = {
 }
 
 def _snapshot_form(source: str):
+    """Persist the current form values for the selected project source."""
     snap_key = _SOURCE_SNAPSHOT_KEY.get(source)
     if not snap_key:
         return
     st.session_state[snap_key] = {k: st.session_state.get(k, None) for k in _PERSISTED_KEYS}
 
 def _preload_from_snapshot(source: str):
+    """Restore saved form values for the selected project source."""
     snap_key = _SOURCE_SNAPSHOT_KEY.get(source)
     if not snap_key:
         return
@@ -131,9 +127,11 @@ _WATCH_KEYS = sorted(set(_PERSISTED_KEYS + [
 ]))
 
 def _mark_unsaved():
+    """Mark the project details form as incomplete after a relevant change."""
     st.session_state["details_complete"] = False
 
 def _watch_and_reset():
+    """Compare watched values against prior values and reset completion when changed."""
     changed = False
     for k in _WATCH_KEYS:
         v = st.session_state.get(k, None)
@@ -148,11 +146,21 @@ def _watch_and_reset():
 # FORM ENTRYPOINT: SOURCE SELECTION + ROUTING
 # =============================================================================
 def project_details_form():
+    """Render source selection and route to the selected project details form."""
+    # -------------------------------------------------------------------------
+    # Session State Setup and Read Review
+    # -------------------------------------------------------------------------
+    # Existing setdefault calls below are part of the current form behavior and
+    # are preserved. Most session state values in this file are intentionally
+    # read near their point of use because the form widgets and callbacks update
+    # them throughout the same Streamlit run. Centralizing those reads could make
+    # values stale and change behavior.
+
     # Ensure base keys exist
     st.session_state.setdefault("form_version", 0)
     st.session_state.setdefault("prev_info_option", None)
     st.session_state.setdefault("info_option", None)
-    st.session_state.setdefault("__last_valid_info_option", None)  # ← track last valid segmented selection  [1](https://mbakerintl-my.sharepoint.com/personal/charles_ross_mbakerintl_com/Documents/Microsoft%20Copilot%20Chat%20Files/details_form.py)
+    st.session_state.setdefault("__last_valid_info_option", None)  # ← track last valid segmented selection
 
     # If the last submitted type exists, preload its snapshot before drawing UI
     last_type = st.session_state.get("details_type")
@@ -167,6 +175,7 @@ def project_details_form():
 
     # --- REPAIR/SEED segmented control BEFORE render --------------------------
     def _pick_valid_info_option():
+        """Return a valid source selection for the segmented control."""
         # Priority: current info_option, details_type, prev_info_option, last valid cache, fallback
         current = st.session_state.get("info_option")
         if current in OPTIONS:
@@ -214,7 +223,7 @@ def project_details_form():
             st.session_state["aashto_label"] = ""
             st.session_state["aashto_selected_project"] = ""
             # Do NOT nuke segmented-control state or its cache
-            EXEMPT = {"info_option", "__last_valid_info_option", "prev_info_option", "details_type"}  # ← new  [1](https://mbakerintl-my.sharepoint.com/personal/charles_ross_mbakerintl_com/Documents/Microsoft%20Copilot%20Chat%20Files/details_form.py)
+            EXEMPT = {"info_option", "__last_valid_info_option", "prev_info_option", "details_type"}
             for k in _PERSISTED_KEYS:
                 if k in EXEMPT:
                     continue
@@ -268,10 +277,12 @@ def project_details_form():
 # FORM BODY RENDERER
 # =============================================================================
 def _render_original_form(is_awp: bool):
+    """Render the original project details form for AASHTOWare or User Input."""
     version = st.session_state.get("form_version", 0)
     form_key = f"project_details_form_{version}"
 
     def val(key_user: str, key_awp: str = None, coerce_float: bool = False):
+        """Read a form value from session state and optionally coerce it to float."""
         if is_awp and key_awp:
             v = st.session_state.get(key_awp, "")
         else:

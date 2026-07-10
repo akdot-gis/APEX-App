@@ -1,24 +1,58 @@
+"""Geometry loading workflow for the APEX Loader Application.
+
+This module renders the Streamlit controls used to select a project geometry
+source, load point/route/boundary geometry, run related geography queries, and
+submit the project footprint for downstream loader steps.
+
+Existing behavior, Streamlit UI text, labels, messages, button text, field
+names, variable names, function names, session state key names, imports, and
+logic are preserved.
+"""
+
 import streamlit as st
+
 from util.geometry_util import (
-    point_shapefile,
-    polyline_shapefile,
-    polygon_shapefile,
-    enter_latlng,
-    draw_point,
-    draw_line,
-    draw_boundary,
-    aashtoware_point,
     aashtoware_path,
+    aashtoware_point,
+    draw_boundary,
+    draw_line,
+    draw_point,
+    enter_latlng,
+    point_shapefile,
+    polygon_shapefile,
+    polyline_shapefile,
 )
 from util.streamlit_util import (
-    segmented_with_safe_default,
     handle_project_type_change,
     handle_upload_method_change,
-    run_queries_if_geometry_changed,
     render_geographies_expander,
+    run_queries_if_geometry_changed,
+    segmented_with_safe_default,
 )
-from agol.agol_util import aashtoware_geometry  # (kept for side effects elsewhere if needed)
-from agol.agol_district_queries import run_district_queries  # noqa: F401 (referenced in utilities)
+
+# =============================================================================
+# Geometry Signature Helpers
+# =============================================================================
+
+def _geometry_signature(point_val, route_val, boundary_val):
+    """Create a stable signature for the currently selected geometry values."""
+    import json
+
+    def _safe_dump(x):
+        """Serialize a geometry value to a stable string representation."""
+        try:
+            return json.dumps(x, sort_keys=True, default=str)
+        except Exception:
+            return str(x)
+
+    if point_val is not None:
+        return ("point", _safe_dump(point_val))
+    if route_val is not None:
+        return ("route", _safe_dump(route_val))
+    if boundary_val is not None:
+        return ("boundary", _safe_dump(boundary_val))
+    return (None, None)
+
 
 # =============================================================================
 # ENTRYPOINT: GEOMETRY SELECTION / UPLOAD ROUTER (container-based, no forms)
@@ -26,7 +60,20 @@ from agol.agol_district_queries import run_district_queries  # noqa: F401 (refer
 def load_geometry_app():
     """
     Primary Streamlit UI entrypoint for selecting and loading project geometry.
+
+    The function preserves the existing segmented-control workflow for project
+    type, geometry source, geometry capture, geography query execution, and
+    footprint submission.
     """
+
+    # -------------------------------------------------------------------------
+    # Session State Setup and Read Review
+    # -------------------------------------------------------------------------
+    # Existing setdefault calls below are part of the current geometry workflow
+    # behavior and are preserved. Most session state values in this function are
+    # intentionally read near their point of use because widgets and utility
+    # calls can update them during the same Streamlit run. Centralizing those
+    # reads could make values stale and change behavior.
 
     # --------------------------
     # Versioned container key support
@@ -41,24 +88,6 @@ def load_geometry_app():
     st.session_state.setdefault("submitted_option", None)
     st.session_state.setdefault("submitted_geom_sig", None)
     st.session_state.setdefault("map_reset_counter", 0)
-
-    # NEW: Helper to create a stable signature of current geometry
-    def _geometry_signature(point_val, route_val, boundary_val):
-        import json
-
-        def _safe_dump(x):
-            try:
-                return json.dumps(x, sort_keys=True, default=str)
-            except Exception:
-                return str(x)
-
-        if point_val is not None:
-            return ("point", _safe_dump(point_val))
-        if route_val is not None:
-            return ("route", _safe_dump(route_val))
-        if boundary_val is not None:
-            return ("boundary", _safe_dump(boundary_val))
-        return (None, None)
 
     # -------------------------------------------------------------------------
     # Choose Site / Route / Boundary project type
@@ -85,7 +114,7 @@ def load_geometry_app():
     if not project_type:
         # If project type was cleared and we had a submission before, invalidate it
         if st.session_state.get("footprint_submitted"):
-            st.session_state["footprint_submitted"] = False  # NEW/CHANGED
+            st.session_state["footprint_submitted"] = False
         return
 
     st.markdown("###### CHOOSE GEOSPATIAL SOURCE\n", unsafe_allow_html=True)
@@ -124,7 +153,7 @@ def load_geometry_app():
     if project_type.startswith("Route"):
         if points:
             if isinstance(points, list):
-                # NEW/CHANGED: list-of-dicts format
+                # list-of-dicts format
                 types_present = {
                     str(p.get("type", "")).strip().upper()
                     for p in points
@@ -144,7 +173,7 @@ def load_geometry_app():
         options = ["Upload Shapefile", "Enter Latitude/Longitude", "Select Point on Map"]
         if show_awp_point_option:
             options = ["AASHTOWare"] + options
-        # NEW/CHANGED: don't override user's previous option on every render
+        # Don't override user's previous option on every render
         st.session_state.setdefault("option", "AASHTOWare")
         option = segmented_with_safe_default("Choose Upload Method:", options, "option")
         handle_upload_method_change(option, clear_boundary=False)
@@ -153,7 +182,7 @@ def load_geometry_app():
         options = ["Upload Shapefile", "Draw Route on Map"]
         if show_awp_route_option:
             options = ["AASHTOWare"] + options
-        # NEW/CHANGED: don't override user's previous option on every render
+        # Don't override user's previous option on every render
         st.session_state.setdefault("option", "AASHTOWare")
         option = segmented_with_safe_default("Choose Upload Method:", options, "option")
         handle_upload_method_change(option, clear_boundary=False)
@@ -163,7 +192,7 @@ def load_geometry_app():
         option = segmented_with_safe_default("Choose Upload Method:", options, "option")
         handle_upload_method_change(option, clear_boundary=True)
 
-    # NEW/CHANGED: If the controls differ from what was submitted, invalidate submission
+    # If the controls differ from what was submitted, invalidate submission
     if st.session_state.get("footprint_submitted"):
         if (
             project_type != st.session_state.get("submitted_project_type")
@@ -182,7 +211,7 @@ def load_geometry_app():
         st.session_state["prev_geometry_option"] = current_opt
         # Also invalidate previous submission on option change (defensive)
         if st.session_state.get("footprint_submitted"):
-            st.session_state["footprint_submitted"] = False  # NEW/CHANGED
+            st.session_state["footprint_submitted"] = False
 
     current_pt = project_type
     prev_pt = st.session_state.get("prev_geometry_project_type")
@@ -191,7 +220,7 @@ def load_geometry_app():
         st.session_state["prev_geometry_project_type"] = current_pt
         # Also invalidate previous submission on project type change (defensive)
         if st.session_state.get("footprint_submitted"):
-            st.session_state["footprint_submitted"] = False  # NEW/CHANGED
+            st.session_state["footprint_submitted"] = False
 
     # --------------------------
     # Construct the custom container key (versioned)
@@ -205,7 +234,7 @@ def load_geometry_app():
     geo_container = st.container(key=container_key, border=True)
     with geo_container:
         # ---------------------------------------------------------------------
-        # NEW/CHANGED: Rehydrate previously submitted geometry so the map
+        # Rehydrate previously submitted geometry so the map
         # components can repaint when the user returns to this page.
         # ---------------------------------------------------------------------
         if st.session_state.get("footprint_submitted") and st.session_state.get("project_geometry") is not None:
@@ -263,7 +292,7 @@ def load_geometry_app():
         route_val = st.session_state.get("selected_route")
         boundary_val = st.session_state.get("selected_boundary")
 
-        # NEW/CHANGED: Invalidate if geometry changed after submit
+        # Invalidate if geometry changed after submit
         cur_geom_sig = _geometry_signature(point_val, route_val, boundary_val)
         if st.session_state.get("footprint_submitted") and (
             cur_geom_sig != st.session_state.get("submitted_geom_sig")
@@ -284,7 +313,7 @@ def load_geometry_app():
                 if k in st.session_state:
                     st.session_state[k] = None
         else:
-            # Run queries only when geometry changes (existing util)
+            # Run queries only when geometry changes
             run_queries_if_geometry_changed(point_val, route_val, boundary_val)
 
         # Read computed geography strings
@@ -307,7 +336,7 @@ def load_geometry_app():
             render_geographies_expander(show_routes=False)
 
         # ---------------------------------------------------------------------
-        # UPDATED: Always show the submit button whenever geometry exists,
+        # Always show the submit button whenever geometry exists,
         # regardless of whether any geography values were returned.
         # ---------------------------------------------------------------------
         geometry_ready = (
@@ -323,6 +352,7 @@ def load_geometry_app():
             btn_ph = st.empty()
 
             def _render_submit_button(is_done: bool):
+                """Render the live or completed submit button in the existing placeholder."""
                 label = "SUBMIT FOOTPRINT ✔" if is_done else "SUBMIT FOOTPRINT"
                 suffix = "done" if is_done else "live"
                 return btn_ph.button(

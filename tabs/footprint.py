@@ -25,48 +25,23 @@ from util.map_util import (
     set_zoom,
     geometry_to_folium
 )
-from util.read_only_util import ro_widget
-from util.input_util import (
-    fmt_string,
-    fmt_date,
-    fmt_agol_date,
-    fmt_currency,
-    fmt_int,
-    fmt_int_or_none,
-    fmt_date_or_none,
-    widget_key,
-)
+
 # ⬇️ also import aashtoware_project so we can render the selector
 from util.streamlit_util import session_selectbox
 from typing import Optional, Dict, Any, List
 
-from util.geometry_util import (
-    point_shapefile,
-    polyline_shapefile,
-    polygon_shapefile,
-    enter_latlng,
-    draw_point,
-    draw_line,
-    draw_boundary,
-    aashtoware_point,
-    aashtoware_path,
-)
-from util.streamlit_util import (
-    segmented_with_safe_default,
-    handle_project_type_change,
-    handle_upload_method_change,
-    run_queries_if_geometry_changed,
-    render_geographies_expander,
-)
 from agol.agol_util import aashtoware_geometry  # (kept for side effects elsewhere if needed)
-from agol.agol_district_queries import run_district_queries  # noqa: F401 (referenced in utilities)
 from steps.load_geometry import load_geometry_app
+
+
 
 # -----------------------------------------------------------------------------
 # Initialize Keys
 # -----------------------------------------------------------------------------
 if "update_footprint_mode" not in st.session_state:
     st.session_state["update_footprint_mode"] = False
+
+
 
 # -----------------------------------------------------------------------------
 # Initialize AWP Session Keys
@@ -77,6 +52,8 @@ if "awp_id" not in st.session_state:
     st.session_state["awp_id"] = None
 if "awp_geometry_points" not in st.session_state:
     st.session_state["awp_geometry_points"] = None
+
+
 
 # -----------------------------------------------------------------------------
 # Helper: validate AWP Contract ID
@@ -95,6 +72,8 @@ def _is_valid_awp_contract_id(value: Any) -> bool:
     if isinstance(value, (int, float)):
         return value != 0
     return True
+
+
 
 
 
@@ -118,6 +97,8 @@ def _get_project_record():
     return recs[0]["attributes"] if recs else None
 
 
+
+
 def _normalize_features(maybe_rec: Any) -> List[Dict[str, Any]]:
     """Normalize a select_record() return value into a plain list of feature dicts."""
     if maybe_rec is None:
@@ -129,6 +110,8 @@ def _normalize_features(maybe_rec: Any) -> List[Dict[str, Any]]:
     if isinstance(maybe_rec, dict) and ("attributes" in maybe_rec or "geometry" in maybe_rec):
         return [maybe_rec]
     return []
+
+
 
 
 def _get_objectid_from_attributes(attrs: Dict[str, Any]) -> Optional[int]:
@@ -144,6 +127,8 @@ def _get_objectid_from_attributes(attrs: Dict[str, Any]) -> Optional[int]:
     return None
 
 
+
+
 def _ensure_objectid_key(attrs: Dict[str, Any]) -> None:
     """Ensure attrs contains an 'OBJECTID' key when any objectid variant is present."""
     if not isinstance(attrs, dict):
@@ -154,6 +139,8 @@ def _ensure_objectid_key(attrs: Dict[str, Any]) -> None:
         if k in attrs and attrs.get(k) is not None:
             attrs["OBJECTID"] = attrs.get(k)
             return
+
+
 
 
 def _collect_objectids_from_features(features: List[Dict[str, Any]]) -> List[int]:
@@ -168,6 +155,8 @@ def _collect_objectids_from_features(features: List[Dict[str, Any]]) -> List[int
     return out
 
 
+
+
 def _resolve_new_project_type() -> Optional[str]:
     """Resolve the *new* project type based on which geometry selector is active."""
     if st.session_state.get("selected_point") is not None:
@@ -177,6 +166,8 @@ def _resolve_new_project_type() -> Optional[str]:
     if st.session_state.get("selected_boundary") is not None:
         return "Boundary"
     return None
+
+
 
 
 def _project_type_to_footprint_layer(proj_type: Optional[str]) -> Optional[int]:
@@ -191,6 +182,8 @@ def _project_type_to_footprint_layer(proj_type: Optional[str]) -> Optional[int]:
 
 
 
+
+
 def _first_nonempty(mapping: dict, keys: list):
     """Return first non-empty value from mapping for any key in keys."""
     for k in keys:
@@ -202,6 +195,8 @@ def _first_nonempty(mapping: dict, keys: list):
                 continue
             return v
     return None
+
+
 
 
 def _as_list(value):
@@ -221,6 +216,8 @@ def _as_list(value):
     return [value]
 
 
+
+
 def _seed_payload_builder_state_from_project(project_rec: dict) -> None:
     """
     Seed st.session_state keys expected by geometry_payload/location_payload/geography_payload
@@ -228,6 +225,8 @@ def _seed_payload_builder_state_from_project(project_rec: dict) -> None:
     """
     if not isinstance(project_rec, dict) or not project_rec:
         return
+
+
 
     # parent globalid used by child layers as parentglobalid
     if st.session_state.get("apex_globalid") is None:
@@ -237,16 +236,22 @@ def _seed_payload_builder_state_from_project(project_rec: dict) -> None:
             or st.session_state.get("apex_guid")
         )
 
+
+
     # names
     if st.session_state.get("proj_name") is None:
         st.session_state["proj_name"] = _first_nonempty(project_rec, [
             "Proj_Name", "Project_Name", "ProjectName", "proj_name", "project_name", "Name", "Title"
         ])
 
+
+
     if st.session_state.get("awp_proj_name") is None:
         st.session_state["awp_proj_name"] = _first_nonempty(project_rec, [
             "AWP_Proj_Name", "Awp_Proj_Name", "awp_proj_name", "AWP_Project_Name", "ContractID", "awp_id"
         ])
+
+
 
     # admin strings used by geometry/location payloads
     if st.session_state.get("region_string") is None:
@@ -254,34 +259,50 @@ def _seed_payload_builder_state_from_project(project_rec: dict) -> None:
             "DOT_PF_Region", "Proj_DOT_PF_Region", "Region", "region_string"
         ])
 
+
+
     if st.session_state.get("borough_string") is None:
         st.session_state["borough_string"] = _first_nonempty(project_rec, [
             "Borough_Census_Area", "Proj_Borough_Census_Area", "Borough", "borough_string"
         ])
+
+
 
     if st.session_state.get("senate_string") is None:
         st.session_state["senate_string"] = _first_nonempty(project_rec, [
             "Senate_District", "Proj_Senate_District", "senate_string"
         ])
 
+
+
     if st.session_state.get("house_string") is None:
         st.session_state["house_string"] = _first_nonempty(project_rec, [
             "House_District", "Proj_House_District", "house_string"
         ])
+
+
 
     # geography_payload(...) expects {name}_list keys: region_list, borough_list, senate_list, house_list
     # Prefer the explicit list fields already present in your project record.
     if st.session_state.get("region_list") is None:
         st.session_state["region_list"] = _as_list(_first_nonempty(project_rec, ["List_DOT_PF_Region", "region_list"]))
 
+
+
     if st.session_state.get("borough_list") is None:
         st.session_state["borough_list"] = _as_list(_first_nonempty(project_rec, ["List_Borough_Census_Area", "borough_list"]))
+
+
 
     if st.session_state.get("senate_list") is None:
         st.session_state["senate_list"] = _as_list(_first_nonempty(project_rec, ["List_Senate_District", "senate_list"]))
 
+
+
     if st.session_state.get("house_list") is None:
         st.session_state["house_list"] = _as_list(_first_nonempty(project_rec, ["List_House_District", "house_list"]))
+
+
 
 
 
@@ -309,6 +330,8 @@ def _clear_footprint_and_load_geometry_state():
         "List_DOT_PF_Region",
         "List_Borough_Census_Area",
 
+
+
         # --- payload-builder seed keys (manager context) ---
         "apex_globalid",
         "proj_name",
@@ -318,6 +341,8 @@ def _clear_footprint_and_load_geometry_state():
         "senate_list",
         "house_list",
         "center",
+
+
 
         # --- load_geometry-created keys (from load_geometry step) ---
         "footprint_submitted",
@@ -343,8 +368,12 @@ def _clear_footprint_and_load_geometry_state():
         "borough_string",
     }
 
+
+
     for k in keys_to_clear:
         st.session_state.pop(k, None)
+
+
 
 
 
@@ -354,10 +383,14 @@ def _reset_to_fresh_run_after_deploy():
     st.rerun()
 
 
+
+
 def build_project_update_payload(project_rec: Dict[str, Any], new_proj_type: str) -> Dict[str, Any]:
     """Build the applyEdits update payload for the main Projects layer."""
     if not project_rec:
         return {"updates": []}
+
+
 
     # Requires OBJECTID so AGOL can target the correct feature for update.
     attrs = {
@@ -366,7 +399,11 @@ def build_project_update_payload(project_rec: Dict[str, Any], new_proj_type: str
     }
     attrs = {k: v for k, v in attrs.items() if v is not None}
 
+
+
     return {"updates": [{"attributes": attrs}]}
+
+
 
 
 def build_delete_payload_from_rec(maybe_rec: Any) -> Dict[str, Any]:
@@ -376,15 +413,23 @@ def build_delete_payload_from_rec(maybe_rec: Any) -> Dict[str, Any]:
     return {"deletes": oids}
 
 
+
+
 def build_footprint_add_payload(apex_guid: str, esri_geom: Dict[str, Any]) -> Dict[str, Any]:
     """Build the applyEdits adds payload for the *new* footprint geometry."""
     if not apex_guid or not esri_geom:
         return {"adds": []}
 
+
+
     # NOTE: Keep this minimal on purpose. We'll add additional attributes later.
     attrs = {"parentglobalid": apex_guid}
 
+
+
     return {"adds": [{"attributes": attrs, "geometry": esri_geom}]}
+
+
 
 
 def build_geography_add_payloads(apex_guid: str) -> Dict[str, Dict[str, Any]]:
@@ -397,6 +442,8 @@ def build_geography_add_payloads(apex_guid: str) -> Dict[str, Dict[str, Any]]:
     }
 
 
+
+
 def build_traffic_impacts_update_payload(
         apex_guid: str,
         update_attrs: Optional[Dict[str, Any]] = None,
@@ -404,29 +451,43 @@ def build_traffic_impacts_update_payload(
     """
     Build an applyEdits update payload for Traffic Impact records connected to the project.
 
+
+
     This function:
     1. Uses the project GUID to find connected Traffic Impact records.
     2. Collects the OBJECTIDs from those records.
     3. Creates an updates payload for the Traffic Impacts layer.
     4. Allows the caller to pass the attributes that should be updated on each record.
 
+
+
     Required session_state keys:
         - traffic_impact_url
         - traffic_impacts_layer
+
+
 
     Optional session_state key:
         - traffic_impacts_project_guid_field
             Defaults to "project_guid" if not set.
     """
 
+
+
     if not apex_guid:
         return {"updates": []}
+
+
 
     url = st.session_state.get("traffic_impact_url")
     traffic_impacts_layer = st.session_state.get("traffic_impacts_layer")
 
+
+
     if not url or traffic_impacts_layer is None:
         return {"updates": []}
+
+
 
     traffic_impact_recs = select_record(
         url=url,
@@ -437,13 +498,21 @@ def build_traffic_impacts_update_payload(
         return_geometry=False,
     )
 
+
+
     features = _normalize_features(traffic_impact_recs)
     objectids = _collect_objectids_from_features(features)
+
+
 
     if not objectids:
         return {"updates": []}
 
+
+
     attrs_to_apply = update_attrs or {}
+
+
 
     updates = []
     for oid in objectids:
@@ -452,16 +521,83 @@ def build_traffic_impacts_update_payload(
             "DOT_Region": st.session_state.get("region_string", None),
         }
 
+
+
         attrs.update(attrs_to_apply)
+
+
 
         updates.append({
             "attributes": attrs
         })
 
+
+
     return {
         "updates": updates
     }
 
+
+
+
+
+def summarize_deploy_results(results: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a single success/failure summary for a staged deploy run."""
+    failed_steps: List[str] = []
+
+    def _is_acceptable_result(step_result: Any) -> bool:
+        if not isinstance(step_result, dict):
+            return False
+        if step_result.get("success") is True:
+            return True
+        if step_result.get("skipped") is True:
+            return True
+        return False
+
+    for step_name, step_result in (results or {}).items():
+        if step_name == "geography_deletes" or step_name == "geography_adds":
+            if isinstance(step_result, dict):
+                for sub_key, sub_result in step_result.items():
+                    if isinstance(sub_result, dict) and sub_result.get("success") is False:
+                        failed_steps.append(f"{step_name}.{sub_key}")
+                    elif _is_acceptable_result(sub_result):
+                        continue
+            continue
+
+        if isinstance(step_result, dict):
+            if step_result.get("success") is False:
+                failed_steps.append(step_name)
+            elif _is_acceptable_result(step_result):
+                continue
+
+    if failed_steps:
+        return {
+            "success": False,
+            "message": "Deployment failed.",
+            "failed_steps": failed_steps,
+        }
+
+    return {
+        "success": True,
+        "message": "Deployment completed successfully.",
+        "failed_steps": [],
+    }
+
+
+
+def _update_deploy_progress(
+    progress_placeholder: Optional[st.delta_generator.DeltaGenerator],
+    *,
+    step: int,
+    total_steps: int,
+    message: str,
+) -> None:
+    """Update the deployment progress bar with a percent and text message."""
+    if progress_placeholder is None:
+        return
+
+    percent = int((step / total_steps) * 100) if total_steps else 100
+    progress_placeholder.progress(percent, text=message)
 
 
 def deploy_to_agol_footprint_update(
@@ -481,7 +617,11 @@ def deploy_to_agol_footprint_update(
     """
     Deploy helper for UPDATE FOOTPRINT flow.
 
+
+
     This function applies the footprint update workflow to AGOL.
+
+
 
     APEX edits are sent through the APEX loader/service:
         - Projects
@@ -492,36 +632,60 @@ def deploy_to_agol_footprint_update(
         - Geography deletes
         - Geography adds
 
+
+
     Traffic Impact edits are sent through the Traffic Impacts loader/service:
         - Connected Traffic Impact record updates
+
+
 
     The Traffic Impacts URL and layer are NOT passed into this function.
     They are resolved from st.session_state inside the function, the same way
     the other configured layers are resolved.
     """
 
+
+
     results: Dict[str, Any] = {}
+    total_steps = 8
+    current_step = 0
+
 
     apex_url = st.session_state.get("apex_url")
     traffic_impacts_url = st.session_state.get("traffic_impact_url")
 
+
+
     projects_layer = st.session_state.get("projects_layer")
     locations_layer = st.session_state.get("locations_layer")
+
+
 
     house_layer = st.session_state.get("house_layer")
     senate_layer = st.session_state.get("senate_layer")
     region_layer = st.session_state.get("region_layer")
     borough_layer = st.session_state.get("borough_layer")
 
+
+
     traffic_impacts_layer = st.session_state.get("traffic_impacts_layer")
+
+
 
     # -------------------------------------------------------------------------
     # Update parent Projects record
     # -------------------------------------------------------------------------
 
-    if project_payload and project_payload.get("updates"):
-        if progress_placeholder is not None:
-            progress_placeholder.info("Updating project record...")
+
+
+    current_step += 1
+    _update_deploy_progress(
+        progress_placeholder,
+        step=current_step,
+        total_steps=total_steps,
+        message="Updating project record...",
+    )
+    if isinstance(project_payload, dict) and project_payload.get("updates"):
 
         parent_loader = AGOLDataLoader(url=apex_url, layer = projects_layer)
         results["project_update"] = parent_loader.update_features(
@@ -533,14 +697,20 @@ def deploy_to_agol_footprint_update(
             "reason": "No project update payload was built.",
         }
 
+
+
     # -------------------------------------------------------------------------
     # Delete old footprint record
-    # -------------------------------------------------------------------------
-
-    if old_footprint_layer is not None and old_footprint_delete_payload:
+    # ------------------------------------------------------------------------
+    current_step += 1
+    _update_deploy_progress(
+        progress_placeholder,
+        step=current_step,
+        total_steps=total_steps,
+        message="Deleting existing footprint record...",
+    )
+    if old_footprint_layer is not None and isinstance(old_footprint_delete_payload, dict):
         if old_footprint_delete_payload.get("deletes"):
-            if progress_placeholder is not None:
-                progress_placeholder.info("Deleting existing footprint record...")
 
             delete_footprint_loader = AGOLDataLoader(url=apex_url, layer = old_footprint_layer)
             results["old_footprint_delete"] = delete_footprint_loader.delete_features(
@@ -557,13 +727,24 @@ def deploy_to_agol_footprint_update(
             "reason": "Old footprint layer or delete payload was not available.",
         }
 
+
+
     # -------------------------------------------------------------------------
     # Delete existing Location records
     # -------------------------------------------------------------------------
 
-    if locations_delete_payload and locations_delete_payload.get("deletes"):
-        if progress_placeholder is not None:
-            progress_placeholder.info("Deleting existing location records...")
+
+
+    current_step += 1
+    _update_deploy_progress(
+        progress_placeholder,
+        step=current_step,
+        total_steps=total_steps,
+        message="Deleting existing location records...",
+    )
+    if isinstance(locations_delete_payload, dict) and locations_delete_payload.get("deletes"):
+
+
 
         delete_locations_loader = AGOLDataLoader(url=apex_url, layer = locations_layer)
         results["locations_delete"] = delete_locations_loader.delete_features(
@@ -575,13 +756,19 @@ def deploy_to_agol_footprint_update(
             "reason": "No existing location records were found to delete.",
         }
 
+
+
     # -------------------------------------------------------------------------
     # Delete existing Geography records
     # -------------------------------------------------------------------------
 
+
+
     results["geography_deletes"] = {}
 
-    if geo_delete_payloads:
+
+
+    if isinstance(geo_delete_payloads, dict) and geo_delete_payloads:
         geography_delete_layer_map = {
             "house": house_layer,
             "senate": senate_layer,
@@ -589,12 +776,22 @@ def deploy_to_agol_footprint_update(
             "borough": borough_layer,
         }
 
+
+
         for geo_key, delete_payload in geo_delete_payloads.items():
             target_layer = geography_delete_layer_map.get(geo_key)
 
-            if target_layer is not None and delete_payload and delete_payload.get("deletes"):
-                if progress_placeholder is not None:
-                    progress_placeholder.info(f"Deleting existing {geo_key} geography records...")
+
+
+            if target_layer is not None and isinstance(delete_payload, dict) and delete_payload.get("deletes"):
+                _update_deploy_progress(
+                    progress_placeholder,
+                    step=current_step,
+                    total_steps=total_steps,
+                    message=f"Deleting existing {geo_key} geography records...",
+                )
+
+
 
                 geography_delete_loader = AGOLDataLoader(url=apex_url, layer=target_layer)
                 results["geography_deletes"][geo_key] = geography_delete_loader.delete_features(    
@@ -612,36 +809,57 @@ def deploy_to_agol_footprint_update(
         }
 
 
+
+
     # -------------------------------------------------------------------------
     # Add new footprint record
     # -------------------------------------------------------------------------
-    if new_footprint_layer is not None and new_footprint_add_payload:
-        for new_payload in new_footprint_add_payload:
-            if new_payload.get("adds"):
-                if progress_placeholder is not None:
-                    progress_placeholder.info("Adding new footprint record...")
+    current_step += 1
+    _update_deploy_progress(
+        progress_placeholder,
+        step=current_step,
+        total_steps=total_steps,
+        message="Adding new footprint record...",
+    )
+    if new_footprint_layer is not None:
+        payloads = new_footprint_add_payload if isinstance(new_footprint_add_payload, list) else []
+        if payloads:
+            for new_payload in payloads:
+                if isinstance(new_payload, dict) and new_payload.get("adds"):
 
-                new_footprint_loader = AGOLDataLoader(url=apex_url, layer = new_footprint_layer)
-                results["new_footprint_add"] =new_footprint_loader.add_features(
-                    payload=new_payload,
-                )
-            else:
-                results["new_footprint_add"] = {
-                    "skipped": True,
-                    "reason": "No new footprint add payload was built.",
-                }
+                    new_footprint_loader = AGOLDataLoader(url=apex_url, layer=new_footprint_layer)
+                    results["new_footprint_add"] = new_footprint_loader.add_features(
+                        payload=new_payload,
+                    )
+                else:
+                    results["new_footprint_add"] = {
+                        "skipped": True,
+                        "reason": "No new footprint add payload was built.",
+                    }
         else:
             results["new_footprint_add"] = {
                 "skipped": True,
                 "reason": "New footprint layer or add payload was not available.",
             }
+    else:
+        results["new_footprint_add"] = {
+            "skipped": True,
+            "reason": "New footprint layer or add payload was not available.",
+        }
+
+
 
     # -------------------------------------------------------------------------
     # Add new Location records
     # -------------------------------------------------------------------------
-    if new_locations_add_payload and new_locations_add_payload.get("adds"):
-        if progress_placeholder is not None:
-            progress_placeholder.info("Adding new location records...")
+    current_step += 1
+    _update_deploy_progress(
+        progress_placeholder,
+        step=current_step,
+        total_steps=total_steps,
+        message="Adding new location records...",
+    )
+    if isinstance(new_locations_add_payload, dict) and new_locations_add_payload.get("adds"):
     
         new_locations_loader = AGOLDataLoader(url=apex_url, layer = locations_layer)
         results["locations_add"] = new_locations_loader.add_features(
@@ -653,12 +871,16 @@ def deploy_to_agol_footprint_update(
             "reason": "No new location add payload was built.",
         }
 
+
+
     # -------------------------------------------------------------------------
     # Add new Geography records
     # -------------------------------------------------------------------------
     results["geography_adds"] = {}
 
-    if geo_add_payloads:
+
+
+    if isinstance(geo_add_payloads, dict) and geo_add_payloads:
         geography_add_layer_map = {
             "house": house_layer,
             "senate": senate_layer,
@@ -666,12 +888,22 @@ def deploy_to_agol_footprint_update(
             "borough": borough_layer,
         }
 
+
+
         for geo_key, add_payload in geo_add_payloads.items():
             target_layer = geography_add_layer_map.get(geo_key)
 
-            if target_layer is not None and add_payload and add_payload.get("adds"):
-                if progress_placeholder is not None:
-                    progress_placeholder.info(f"Adding new {geo_key} geography records...")
+
+
+            if target_layer is not None and isinstance(add_payload, dict) and add_payload.get("adds"):
+                _update_deploy_progress(
+                    progress_placeholder,
+                    step=current_step,
+                    total_steps=total_steps,
+                    message=f"Adding new {geo_key} geography records...",
+                )
+
+
 
                 geography_add_loader = AGOLDataLoader(url=apex_url, layer=target_layer)
                 results["geography_adds"][geo_key] = geography_add_loader.add_features(
@@ -688,17 +920,26 @@ def deploy_to_agol_footprint_update(
             "reason": "No geography add payloads were provided.",
         }
 
+
+
     # -------------------------------------------------------------------------
     # Update connected Traffic Impact records
     # -------------------------------------------------------------------------
-    if traffic_impacts_update_payload and traffic_impacts_update_payload.get("updates"):
-        if progress_placeholder is not None:
-            progress_placeholder.info("Updating connected traffic impact records...")
+    current_step += 1
+    _update_deploy_progress(
+        progress_placeholder,
+        step=current_step,
+        total_steps=total_steps,
+        message="Updating connected traffic impact records...",
+    )
+    if isinstance(traffic_impacts_update_payload, dict) and traffic_impacts_update_payload.get("updates"):
     
         traffic_impacts_update_loader = AGOLDataLoader(url=traffic_impacts_url, layer=traffic_impacts_layer)
         results["traffic_impacts_update"] = traffic_impacts_update_loader.update_features(
             payload=traffic_impacts_update_payload,
         )
+
+
 
     else:
         results["traffic_impacts_update"] = {
@@ -706,33 +947,51 @@ def deploy_to_agol_footprint_update(
             "reason": "No traffic impact update payload was built.",
         }
 
+
+
     # -------------------------------------------------------------------------
     # Finish deploy
     # -------------------------------------------------------------------------
 
+
+
     if progress_placeholder is not None:
-        progress_placeholder.success("Footprint update deployed successfully.")
+        progress_placeholder.progress(100, text="Footprint update deployed successfully.")
+
+
 
     return results
 
 
+
+
 def manage_footprint():
+
+
 
     st.markdown("##### MANAGE PROJECT FOOTPRINT")
     st.caption("This tab displays the existing footprint for the selected project and allows users to review it for accuracy. "
     "Users may update the footprint as needed to reflect current project conditions or scope."
     )
 
+
+
     # APEX URL
     base_url = st.session_state.get("apex_url")
 
+
+
     # Projects Layer
     projects_layer = st.session_state.get('projects_layer')
+
+
 
     # Footprint Layers
     sites_layer = st.session_state.get("sites_layer")
     routes_layer = st.session_state.get("routes_layer")
     boundaries_layer = st.session_state.get("boundaries_layer")
+
+
 
     # Geography Layers
     region_layer = st.session_state.get("region_layer")
@@ -750,8 +1009,12 @@ def manage_footprint():
         st.error("AGOL Geospatial layers are not configured (UPDATE THIS).")
         
 
+
+
     # Pull Footprint Information from Project Record
     rec = _get_project_record()
+
+
 
     # --------------------------------------------------------------
     # AWP: if project has a valid AWP_Contract_ID, pull AWP geometry
@@ -765,10 +1028,14 @@ def manage_footprint():
         st.session_state["is_awp"] = False
         st.session_state["awp_geometry_points"] = None
 
+
+
     # --------------------------------------------------------------
     # PROJ TYPE: Determine Project Type from Rec
     # --------------------------------------------------------------
     proj_type = rec.get("Proj_Type")
+
+
 
     # Pull Footprint Information
     footprint_rec = None
@@ -800,6 +1067,8 @@ def manage_footprint():
             return_geometry=True
         )
 
+
+
     # --------------------------------------------------------------
     # PROJ TYPE: Determine Project Type from Rec
     # --------------------------------------------------------------
@@ -807,6 +1076,8 @@ def manage_footprint():
     st.session_state['List_Senate_District'] = rec.get("List_Senate_District")
     st.session_state['List_Borough_Census_Area'] = rec.get("List_Borough_Census_Area")
     st.session_state['List_DOT_PF_Region'] = rec.get("List_DOT_PF_Region")
+
+
 
 
     # ------------------------------------------------------------------
@@ -850,6 +1121,8 @@ def manage_footprint():
             return_geometry=False
         )
 
+
+
     # Store raw + normalized feature lists for downstream payload/deletes
     st.session_state["geography_raw_records"] = geography_raw
     st.session_state["geography_records"] = {k: _normalize_features(v) for k, v in geography_raw.items()}
@@ -857,6 +1130,8 @@ def manage_footprint():
     st.session_state["borough_records"] = st.session_state["geography_records"]["borough"]
     st.session_state["senate_records"] = st.session_state["geography_records"]["senate"]
     st.session_state["house_records"] = st.session_state["geography_records"]["house"]
+
+
 
     # ------------------------------------------------------------------
     # Pull Location Records (stored locations layer) by Project GUID
@@ -874,6 +1149,8 @@ def manage_footprint():
             return_geometry=False
         )
 
+
+
     # Store raw + normalized feature list for downstream payload/deletes
     st.session_state['locations_raw_record'] = locations_rec
     st.session_state['locations_records'] = _normalize_features(locations_rec)
@@ -890,20 +1167,30 @@ def manage_footprint():
     }
     packed_geom_type = geom_type_map.get(proj_type)
 
+
+
     def _extract_geometries(geom: Dict[str, Any]):
         """Return geometry coordinate sets from an Esri geometry object.
 
+
+
         All geometry is normalized to a *list* of distinct geometries so downstream
         code can treat it consistently:
+
+
 
         - point/multipoint -> [[[x, y], ...]]      (ONE geometry: list-of-points)
         - polyline         -> [[[x, y], ...], ...] (one geometry per path)
         - polygon          -> [[[x, y], ...], ...] (one geometry per ring)
 
+
+
         Key rule for Sites:
         * A single point OR a list-of-one-point is converted to [[x, y]]
             so geometry_to_folium(feature_type="point") works with the existing
             `for geom_coords in geoms:` loop.
+
+
 
         Notes:
         * ArcGIS may return point geometry as {x,y} OR multipoint as {points:[...]}
@@ -911,12 +1198,16 @@ def manage_footprint():
         """
         out: List[Any] = []
 
+
+
         # ArcGIS can sometimes hand us geometry as a JSON string
         if isinstance(geom, str):
             try:
                 geom = json.loads(geom)
             except Exception:
                 return out
+
+
 
         # Defensive: if geom is already a coordinate container (non-dict)
         # - [x, y]
@@ -930,6 +1221,8 @@ def manage_footprint():
                     out.append([[x, y]])  # <-- convert to list-of-points
                     return out
 
+
+
                 # case: [[x, y], ...]
                 if all(isinstance(pt, (list, tuple)) and len(pt) >= 2 for pt in geom):
                     pts: List[List[float]] = []
@@ -941,7 +1234,11 @@ def manage_footprint():
                         out.append(pts)  # <-- ONE geometry: list-of-points
                     return out
 
+
+
             return out
+
+
 
         # Point: {x, y} -> [[[x, y]]]
         if "x" in geom and "y" in geom:
@@ -950,6 +1247,8 @@ def manage_footprint():
             if x is not None and y is not None:
                 out.append([[x, y]])  # <-- ONE geometry: list-of-points
             return out
+
+
 
         # Multipoint: {points:[[x,y],...]} -> [[[x,y],[x,y],...]]
         pts = geom.get("points")
@@ -961,10 +1260,14 @@ def manage_footprint():
                     if x is not None and y is not None:
                         gathered.append([x, y])
 
+
+
             # If list-of-one-point, this becomes [[x,y]] as required.
             if gathered:
                 out.append(gathered)  # <-- ONE geometry: list-of-points
             return out
+
+
 
         # Polyline: {paths:[[[x,y],...], ...]} -> one geometry per path
         paths = geom.get("paths")
@@ -980,6 +1283,8 @@ def manage_footprint():
                     out.append(coords)
             return out
 
+
+
         # Polygon: {rings:[[[x,y],...], ...]} -> one geometry per ring
         rings = geom.get("rings")
         if isinstance(rings, list):
@@ -994,7 +1299,11 @@ def manage_footprint():
                     out.append(coords)
             return out
 
+
+
         return out
+
+
 
     geometries = []
     if footprint_rec is not None:
@@ -1007,10 +1316,14 @@ def manage_footprint():
         else:
             features = footprint_rec if isinstance(footprint_rec, list) else [footprint_rec]
 
+
+
         for feat in features:
             geom = (feat or {}).get('geometry')
             if geom is not None:
                 geometries.extend(_extract_geometries(geom))
+
+
 
     footprint_item = {
         'type': proj_type,
@@ -1018,9 +1331,13 @@ def manage_footprint():
         'geometries': geometries,
     }
 
+
+
     # Store packaged footprint so the map section can read it on this rerun
     st.session_state['footprint_item'] = footprint_item
     st.write('')
+
+
 
 
     footprint_container = st.container(border=False)
@@ -1039,12 +1356,16 @@ def manage_footprint():
                 geom_kind = item.get("geometry_type")
                 geoms = item.get("geometries", [])
 
+
+
                 if geoms:
                     m = folium.Map(
                         location=[63.833333, -152.0],  # Alaska center (fixed anchor)
                         zoom_start=4,
                         control_scale=True,
                     )
+
+
 
                     for geom_coords in geoms:
                         layer = geometry_to_folium(
@@ -1069,6 +1390,8 @@ def manage_footprint():
                         )
                         layer.add_to(m)
 
+
+
                     # Fit bounds based on geometry type
                     def _fallback_bounds_from_geoms(_geom_kind, _geoms):
                         pts = []
@@ -1091,6 +1414,8 @@ def manage_footprint():
                         lons = [p[1] for p in pts]
                         return [[min(lats), min(lons)], [max(lats), max(lons)]]
 
+
+
                     bounds = None
                     try:
                         if geom_kind == 'point':
@@ -1111,14 +1436,20 @@ def manage_footprint():
                         except Exception:
                             bounds = None
 
+
+
                     if not bounds:
                         bounds = _fallback_bounds_from_geoms(geom_kind, geoms)
+
+
 
                     if bounds:
                         try:
                             m.fit_bounds(bounds)
                         except Exception:
                             pass
+
+
 
                     st_folium(
                         m,
@@ -1128,8 +1459,12 @@ def manage_footprint():
                         key='footprint_map',
                     )
 
+
+
                 else:
                     st.caption("No footprint geometry is available for this project.")
+
+
 
 
             st.write('')
@@ -1142,6 +1477,8 @@ def manage_footprint():
                 borough_val =  st.session_state['List_Borough_Census_Area']
                 region_val =  st.session_state['List_DOT_PF_Region']
 
+
+
                 col1, col2 = st.columns(2)
                 col1.markdown(f"**House Districts:** {house_val or '—'}")
                 col2.markdown(f"**Senate Districts:** {senate_val or '—'}")
@@ -1149,15 +1486,21 @@ def manage_footprint():
                 col2.markdown(f"**Regions:** {region_val or '—'}")
 
 
+
+
     def _reset_load_geometry_state():
         # Reset load_geometry session state so the UI behaves like a fresh loader run
         st.session_state["footprint_submitted"] = False
         st.session_state["just_submitted_geometry"] = False
 
+
+
         # Clear previously-submitted geometry
         st.session_state["project_geometry"] = None
         st.session_state["project_geom_type"] = None
         st.session_state["project_geom"] = None
+
+
 
         # Clear selections / widget-tracking state (used by load_geometry_app)
         st.session_state["selected_point"] = None
@@ -1170,8 +1513,12 @@ def manage_footprint():
         st.session_state["submitted_option"] = None
         st.session_state["submitted_project_type"] = None
 
+
+
         # Bump the version so any widget keys inside load_geometry_app are forced to rebuild
         st.session_state["geometry_form_version"] = int(st.session_state.get("geometry_form_version", 0)) + 1
+
+
 
         def _clear_footprint_and_load_geometry_state():
             """Clear session_state keys created by footprint.py and by load_geometry step."""
@@ -1197,6 +1544,8 @@ def manage_footprint():
                 "List_DOT_PF_Region",
                 "List_Borough_Census_Area",
 
+
+
                 # --- load_geometry-created keys (from load_geometry step) ---
                 "footprint_submitted",
                 "just_submitted_geometry",
@@ -1221,8 +1570,12 @@ def manage_footprint():
                 "borough_string",
             }
 
+
+
             for k in keys_to_clear:
                 st.session_state.pop(k, None)
+
+
 
 
     def _reset_to_fresh_run_after_deploy():
@@ -1231,9 +1584,13 @@ def manage_footprint():
         st.rerun()
 
 
+
+
     def _enter_update_footprint_mode():
         st.session_state["update_footprint_mode"] = True
         _reset_load_geometry_state()
+
+
 
     def _deploy_footprint_update(
         progress_placeholder: st.delta_generator.DeltaGenerator,
@@ -1243,7 +1600,11 @@ def manage_footprint():
     ) -> None:
         """Build staged payloads and run the staged deploy helper.
 
+
+
         For now: stages + payload creation only (no AGOL writes).
+
+
 
         Active (staged) payloads:
           - Project payload
@@ -1251,27 +1612,43 @@ def manage_footprint():
           - Locations deletes payload
           - Geography deletes payloads (house/senate/borough/region)
 
+
+
         Also captures and persists OBJECTIDs for project + footprint + locations + geography.
         """
 
+
+
         apex_guid = st.session_state.get("apex_guid")
+
+
 
         old_proj_type = (project_rec or {}).get("Proj_Type")
         new_proj_type = _resolve_new_project_type() or old_proj_type
 
+
+
         old_footprint_layer = _project_type_to_footprint_layer(old_proj_type)
         new_footprint_layer = _project_type_to_footprint_layer(new_proj_type)
+
+
 
         # ---------------------------------------------------------------------
         # OBJECTID CAPTURE (ACTIVE)
         # ---------------------------------------------------------------------
         project_objectid = _get_objectid_from_attributes(project_rec or {})
 
+
+
         footprint_features = _normalize_features(footprint_rec_any)
         footprint_objectids = _collect_objectids_from_features(footprint_features)
 
+
+
         locations_features = _normalize_features(locations_rec_any)
         locations_objectids = _collect_objectids_from_features(locations_features)
+
+
 
         geo_records = st.session_state.get("geography_records") or {}
         if not isinstance(geo_records, dict) or not geo_records:
@@ -1282,10 +1659,14 @@ def manage_footprint():
                 "borough": st.session_state.get("borough_records"),
             }
 
+
+
         geography_objectids: Dict[str, List[int]] = {}
         for layer in ("house", "senate", "borough", "region"):
             feats = _normalize_features(geo_records.get(layer))
             geography_objectids[layer] = _collect_objectids_from_features(feats)
+
+
 
         geography_objectids_all = (
             geography_objectids.get("house", [])
@@ -1294,6 +1675,8 @@ def manage_footprint():
             + geography_objectids.get("region", [])
         )
 
+
+
         st.session_state["deploy_objectids"] = {
             "project": project_objectid,
             "footprint": footprint_objectids,
@@ -1301,6 +1684,8 @@ def manage_footprint():
             "geography": geography_objectids,
             "geography_all": geography_objectids_all,
         }
+
+
 
         # ---------------------------------------------------------------------
         # 1) Project payload (ACTIVE)
@@ -1324,15 +1709,20 @@ def manage_footprint():
         except Exception:
             proj_type_from_payload = None
 
+
+
         if proj_type_from_payload:
             new_proj_type = proj_type_from_payload
+
 
         # Re-resolve new footprint layer based on NEW proj_type
         new_footprint_layer = _project_type_to_footprint_layer(new_proj_type)
 
+
         # Deletes payloads
         old_footprint_delete_payload = manage_footprint_deletes_payload(footprint_objectids)
         locations_delete_payload = manage_footprint_deletes_payload(locations_objectids)
+
 
         geography_delete_payloads: Dict[str, Dict[str, Any]] = {}
         for layer in ("house", "senate", "borough", "region"):
@@ -1343,18 +1733,26 @@ def manage_footprint():
         # Ensure payload-builder session-state keys exist in manager context
         _seed_payload_builder_state_from_project(project_rec)
 
+
+
         # Adds payloads
         new_location_payload = location_payload()
         new_footprint_payload = geometry_payload()
+
+
 
         geography_add_payloads: Dict[str, Dict[str, Any]] = {}
         for layer in ("house", "senate", "borough", "region"):
             geography_add_payloads[layer] = geography_payload(layer)
 
+
+
         # Traffic Impact Update Payload
         traffic_impacts_update_payload = build_traffic_impacts_update_payload(
             apex_guid=apex_guid,
         )
+
+
 
 
         # ---------------------------------------------------------------------
@@ -1374,9 +1772,14 @@ def manage_footprint():
             progress_placeholder=progress_placeholder,
         )
 
+
+
+        summary = summarize_deploy_results(deploy_result or {})
+
         # Persist last result for review/debug (no payloads printed inline)
         st.session_state["last_footprint_deploy_result"] = {
             **(deploy_result or {}),
+            "summary": summary,
             "objectids": st.session_state.get("deploy_objectids"),
             "old_proj_type": old_proj_type,
             "new_proj_type": new_proj_type,
@@ -1385,23 +1788,41 @@ def manage_footprint():
             "apex_guid": apex_guid,
         }
 
-        if deploy_result and deploy_result.get("success") is True:
+
+
+        if summary.get("success") is True:
             _reset_to_fresh_run_after_deploy()
             return
 
-        st.error((deploy_result or {}).get("message", "Deployment failed."))
+
+
+        st.error(summary.get("message", "Deployment failed."))
+
+
 
         with st.expander("Deployment results", expanded=False):
+            st.markdown(project_payload)
+            st.markdown(new_footprint_layer)
+            st.markdown(new_footprint_payload)
             st.json(st.session_state["last_footprint_deploy_result"])
+            
+
+
 
     
+
+
 
     # ---------------------------------------------------------------------
     # UPDATE BUTTON
     # ---------------------------------------------------------------------
     in_update_mode = bool(st.session_state.get("update_footprint_mode", False))
 
+
+
     has_loaded_geometry = st.session_state.get("project_geometry") is not None
+
+
 
     submitted_ok = (
         bool(st.session_state.get("footprint_submitted")) or
@@ -1409,7 +1830,11 @@ def manage_footprint():
         bool(st.session_state.get("submitted_geom_sig"))
     )
 
+
+
     can_update = bool(has_loaded_geometry and submitted_ok)
+
+
 
     if not in_update_mode:
         st.button(
@@ -1428,11 +1853,17 @@ def manage_footprint():
             disabled=not can_update,
         )
 
+
+
         # ✅ progress bar placeholder is now BELOW the update button
         progress_placeholder = st.empty()
 
+
+
         if clicked and can_update:
             _deploy_footprint_update(progress_placeholder, rec or {}, footprint_rec, locations_rec)
+
+
 
         st.button(
             "CANCEL",

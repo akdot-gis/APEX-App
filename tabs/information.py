@@ -1,8 +1,56 @@
+"""
+information.py
+==============
+
+Streamlit tab module for managing the PROJECT INFORMATION step of the APEX
+Project Manager application.
+
+This module renders and drives the "Manage Project Information" experience for
+an active APEX project. It supports two data source modes:
+
+    1. AASHTOWare Database (AWP): fields are populated from the AASHTOWare
+       connection table and are rendered as read-only widgets.
+    2. User Input: fields are seeded from the AGOL project record and are
+       fully editable by the user.
+
+Key responsibilities:
+    * Resolve the current data source mode and display the corresponding
+      Project Data Source summary (Source, Contract ID, Last Updated).
+    * Render an inline AASHTOWare project selector for the CONNECT / CHANGE /
+      RECONNECT flows and switch the form to AWP mode when a selection is
+      made.
+    * Build applyEdits payloads for the Project Information, Footprint,
+      Traffic Impacts, and Locations layers, and deploy them to AGOL with
+      an in-place Streamlit progress indicator.
+    * Coordinate a "flagged AWP update" side effect against the traffic form
+      layer when requested.
+
+Notes:
+    * This file participates in a modular Streamlit app. It reads many keys
+      from ``st.session_state`` but never initializes or overwrites those
+      keys as part of file cleanup. Session state reads occur inside the
+      callback functions and inside :func:`manage_information` where they
+      must remain because they respond to runtime state changes across
+      Streamlit reruns.
+    * All UI strings, widget keys, and session_state key names are preserved
+      exactly as authored.
+"""
+
 # =============================================================================
 # INFORMATION MANAGEMENT TAB
 # =============================================================================
-import streamlit as st
+
+# -----------------------------------------------------------------------------
+# Imports
+# -----------------------------------------------------------------------------
+# Standard library
 import json
+from typing import Any, Dict, Optional, Union
+
+# Third-party
+import streamlit as st
+
+# Local application: AGOL access + payload builders
 from agol.agol_util import (
     select_record,
     AGOLDataLoader
@@ -11,7 +59,11 @@ from agol.agol_payloads import (
     manage_information_payload,
     manage_project_name_update
 )
+
+# Local application: read-only widget helper
 from util.read_only_util import ro_widget
+
+# Local application: input formatting + widget key helpers
 from util.input_util import (
     fmt_string,
     fmt_date,
@@ -22,35 +74,19 @@ from util.input_util import (
     fmt_date_or_none,
     widget_key,
 )
+
 # ⬇️ also import aashtoware_project so we can render the selector
 from util.streamlit_util import session_selectbox
 from util.aashtoware_util import aashtoware_project
-from typing import Any, Dict, Optional, Union
 
 
 # -----------------------------------------------------------------------------
-# Helper: fetch active project record
+# Constants / Configuration
 # -----------------------------------------------------------------------------
-def _get_project_record():
-    apex_guid = st.session_state.get("apex_guid")
-    url = st.session_state.get("apex_url")
-    layer = st.session_state.get("projects_layer")
-    if not (apex_guid and url and layer is not None):
-        return None
-    recs = select_record(
-        url=url,
-        layer=layer,
-        id_field="globalid",
-        id_value=apex_guid,
-        fields="*",
-        return_geometry=False,
-    )
-    return recs[0]["attributes"] if recs else None
-
-
-# -----------------------------------------------------------------------------
-# AWP value resolution
-# -----------------------------------------------------------------------------
+# Session-state flag keys used to coordinate the AWP connect/change flow with
+# the button row at the bottom of the page. These names are consumed elsewhere
+# in the app and must not change.
+#
 # _awp_value should ONLY use AASHTOWare-loaded (session) values when the user
 # explicitly triggered an AWP load via CONNECT/CHANGE. Otherwise, it should
 # display values from the AGOL project record.
@@ -106,6 +142,63 @@ AWP_FIELDS_FALLBACK = {
 }
 
 
+# -----------------------------------------------------------------------------
+# Session State Access
+# -----------------------------------------------------------------------------
+# NOTE: This file intentionally does NOT centralize st.session_state reads into
+# a single module-level block. All session_state access happens inside the
+# callback functions and inside manage_information() because those values are
+# written and updated across Streamlit reruns (via callbacks, widget events,
+# and AWP loads). Reading them once at module import time would freeze stale
+# values and break the connect/change/update flows. Comments are placed at
+# each in-function read site where the timing is meaningful.
+
+
+# =============================================================================
+# HELPER FUNCTIONS
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Helper: fetch active project record
+# -----------------------------------------------------------------------------
+def _get_project_record():
+    """Return the active APEX project's attribute dictionary from AGOL.
+
+    Reads the currently active APEX GUID and the AGOL projects layer
+    configuration from ``st.session_state`` and issues a single-record
+    ``select_record`` query against the projects layer.
+
+    Returns:
+        dict | None: The ``attributes`` dictionary of the matching project
+        record, or ``None`` if the required session_state keys are missing
+        or the record cannot be found.
+    """
+    # Pull the identifiers needed to locate the project record. These are
+    # read here (not at module scope) because they are populated by earlier
+    # workflow steps and can change between reruns.
+    apex_guid = st.session_state.get("apex_guid")
+    url = st.session_state.get("apex_url")
+    layer = st.session_state.get("projects_layer")
+
+    # Bail out early if any required identifier is missing.
+    if not (apex_guid and url and layer is not None):
+        return None
+
+    # Query AGOL for the single project record by globalid.
+    recs = select_record(
+        url=url,
+        layer=layer,
+        id_field="globalid",
+        id_value=apex_guid,
+        fields="*",
+        return_geometry=False,
+    )
+    return recs[0]["attributes"] if recs else None
+
+
+# -----------------------------------------------------------------------------
+# AWP value resolution
+# -----------------------------------------------------------------------------
 def _awp_value(state_key: str, project: dict, project_field: str):
     """Resolve a displayed value for AWP-backed (read-only) widgets.
 
@@ -117,7 +210,17 @@ def _awp_value(state_key: str, project: dict, project_field: str):
 
     This prevents blank/None displays when the page is loaded without an active
     AWP selection in session_state.
+
+    Args:
+        state_key: UI/state key for the field being resolved (e.g. ``"phase"``).
+        project: The AGOL project attribute dictionary (may be ``None``).
+        project_field: The AGOL attribute name to fall back to when AWP values
+            are not currently active.
+
+    Returns:
+        Any: The resolved display value, or ``None`` if no value is available.
     """
+    # Normalize a missing project dict so subsequent .get() calls are safe.
     project = project or {}
 
     # Only use AWP (session) values when the user explicitly triggered the AWP flow.
@@ -140,9 +243,13 @@ def _resolve_is_awp(project_attrs: dict) -> bool:
     Match details_form logic: prefer the active source selection from session,
     otherwise fall back to the presence of AWP_Contract_ID on the record.
     """
+    # Prefer an explicit selection made by the user in this session; the two
+    # keys mirror how details_form.py tracks the current source choice.
     details_type = st.session_state.get("details_type") or st.session_state.get("info_option")
     if details_type in ("AASHTOWare Database", "User Input"):
         return details_type == "AASHTOWare Database"
+
+    # Fallback: infer AWP mode from the AGOL record itself.
     return bool(project_attrs.get("AWP_Contract_ID"))
 
 
@@ -172,6 +279,9 @@ def _set_pending_source_action(action: Optional[str]):
     """Track the selected source action so the bottom button row can switch
     from source actions to the final UPDATE INFORMATION confirmation.
     """
+    # The pending action drives what _on_update_information() finalizes when
+    # UPDATE INFORMATION is pressed (e.g., "connect", "reconnect", "connect_new",
+    # "remove_connection").
     st.session_state[INFO_PENDING_SOURCE_ACTION_KEY] = action
 
 
@@ -179,11 +289,28 @@ def _set_pending_source_action(action: Optional[str]):
 # NEW: default seeding helpers (used ONLY to prefill values in User Input mode)
 # -----------------------------------------------------------------------------
 def _coerce_to_option(value, options):
-    """Return an option entry that equals `value` by direct or string match."""
+    """Return an option entry that equals ``value`` by direct or string match.
+
+    Streamlit selectboxes require the current value to be present in the
+    ``options`` list. This helper attempts a direct match first, then falls
+    back to a string comparison so that numeric/string mismatches between the
+    AGOL attribute type and the option list type do not cause the widget to
+    lose its default.
+
+    Args:
+        value: Candidate value to align with an entry in ``options``.
+        options: Iterable of allowed selectbox option entries.
+
+    Returns:
+        Any: A matching entry from ``options`` when found, otherwise the
+        original ``value`` unchanged.
+    """
     if value is None or not options:
         return value
     if value in options:
         return value
+
+    # Fall back to string comparison so int/float/str variants still match.
     str_val = str(value)
     for opt in options:
         if str(opt) == str_val:
@@ -193,9 +320,11 @@ def _coerce_to_option(value, options):
 
 def _seed_default(key: str, project: dict, project_field: str, fmt=None):
     """
-    If `key` not set (or blank) in session_state, seed it from project[project_field].
+    If ``key`` not set (or blank) in session_state, seed it from project[project_field].
     Optionally run through a formatter that can handle None.
     """
+    # Only seed the value when nothing has been set yet; never overwrite an
+    # existing user-entered value.
     if key not in st.session_state or st.session_state.get(key) in (None, ""):
         raw = project.get(project_field)
         st.session_state[key] = fmt(raw) if fmt else raw
@@ -204,8 +333,10 @@ def _seed_default(key: str, project: dict, project_field: str, fmt=None):
 def _seed_select_default(key: str, project: dict, project_field: str, options_key: str):
     """
     Seed a selectbox's backing session_state value from the project attribute
-    and coerce it to an entry found in the select `options`.
+    and coerce it to an entry found in the select ``options``.
     """
+    # Only seed the selection when it is not already present; this ensures
+    # returning to the page does not clobber a user's active choice.
     if key not in st.session_state or st.session_state.get(key) in (None, ""):
         options = st.session_state.get(options_key, [])
         raw = project.get(project_field)
@@ -220,6 +351,8 @@ def _build_information_package(is_awp) -> dict:
     Build a package of the current values from the
     PROJECT INFORMATION step.
     """
+    # AWP mode: emit both AWP-mirrored keys (awp_*) and the public keys so
+    # the payload builder can populate both sides of the record correctly.
     if is_awp == True:
         return {
             # 1. Project Name
@@ -260,6 +393,8 @@ def _build_information_package(is_awp) -> dict:
         }
     
 
+    # User Input mode: omit AWP-only keys so the update does not stomp on
+    # AASHTOWare-managed fields.
     elif is_awp == False:
         return {
             # 1. Project Name
@@ -298,6 +433,8 @@ def _build_project_name_payload():
     """
     Build a package to update footprint project names
     """
+    # Only the project name fields are needed to propagate name changes to the
+    # footprint, traffic impacts, and locations layers.
     return {
         # 1. Project Name
         "awp_proj_name": st.session_state.get("awp_proj_name"),
@@ -318,9 +455,12 @@ def _show_awp_selector(mode: str = "connect"):
       - connect_new: exclude the currently connected AWP Id from the list.
       - connect: normal selector for a project without an active AWP connection.
     """
+    # Turn on the inline AWP selector and remember which mode drives it.
     st.session_state["info_show_awp_selector"] = True
     st.session_state["info_awp_selector_mode"] = mode
 
+    # Resolve the currently active AWP id from several possible sources so
+    # the selector can preselect / exclude it as appropriate.
     active_id = (
         st.session_state.get("info_awp_active_id")
         or st.session_state.get("apex_awp_id")
@@ -331,11 +471,15 @@ def _show_awp_selector(mode: str = "connect"):
     )
     st.session_state["info_awp_active_id"] = active_id
 
+    # The selector widget key is versioned so that mode switches produce a
+    # fresh widget instance and clean default state.
     version = st.session_state.get("form_version", 0)
     widget_key_select = f"awp_project_select_{version}"
     placeholder_label = "— Select a project —"
 
+    # Configure per-mode session flags that drive the dropdown's behavior.
     if mode == "reconnect":
+        # Preselect the currently connected AWP id so it can be reloaded.
         if active_id:
             st.session_state["awp_id"] = active_id
             st.session_state["awp_guid"] = active_id
@@ -345,6 +489,8 @@ def _show_awp_selector(mode: str = "connect"):
         st.session_state["info_last_awp_loaded"] = None
         st.session_state["awp_last_loaded_gid"] = None
     elif mode == "connect_new":
+        # Exclude the current connection and clear staged selection state
+        # so the user must actively pick a different project.
         st.session_state["awp_selector_exclude_ids"] = [active_id] if active_id else []
         st.session_state["awp_selector_allow_saved_when_filtered"] = False
         st.session_state[widget_key_select] = placeholder_label
@@ -357,6 +503,7 @@ def _show_awp_selector(mode: str = "connect"):
         st.session_state["info_last_awp_loaded"] = None
         st.session_state["awp_last_loaded_gid"] = None
     else:
+        # Default "connect" mode: no exclusions, permit saved-selection reuse.
         st.session_state["awp_selector_exclude_ids"] = []
         st.session_state["awp_selector_allow_saved_when_filtered"] = True
         st.session_state["info_last_awp_loaded"] = None
@@ -411,6 +558,7 @@ def _apply_awp_attrs_to_state(attrs: dict):
         "RouteId": "awp_route_id",
         "RouteName": "awp_route_name",
     }
+    # Copy each supplied AWP attribute into its friendly session_state slot.
     for awp_attr, friendly_key in _awp_to_friendly.items():
         if awp_attr in attrs:
             st.session_state[friendly_key] = attrs[awp_attr]
@@ -422,6 +570,7 @@ def _load_awp_by_contract_id_and_switch():
     AASHTOWare connection table (by CONTRACT_Id) and switch the form below to
     AASHTOWare mode so fields are populated via AWP_FIELDS.
     """
+    # Determine the currently selected AWP id from any of the aliased keys.
     selected_id = (
         st.session_state.get("apex_awp_id")
         or st.session_state.get("awp_guid")
@@ -446,15 +595,18 @@ def _load_awp_by_contract_id_and_switch():
     ):
         return
 
+    # Guard against reloading the same record on every rerun.
     if st.session_state.get("info_last_awp_loaded") == selected_id:
         return
 
+    # Verify the AWP source layer is configured before issuing a query.
     awp_url = st.session_state.get("awp_url")
     awp_layer = st.session_state.get("awp_contracts_layer")
     if awp_url is None or awp_layer is None:
         st.warning("AASHTOWare source is not configured (missing awp_url or awp_contracts_layer).")
         return
 
+    # Query the AASHTOWare connection table by Id for the selected record.
     recs = select_record(
         url=st.session_state["awp_url"],
         layer=st.session_state["awp_contracts_layer"],
@@ -465,18 +617,22 @@ def _load_awp_by_contract_id_and_switch():
     if recs and "attributes" in recs[0]:
         attrs = recs[0]["attributes"]
 
+        # Mirror the selection across all id aliases used downstream.
         st.session_state["apex_awp_id"] = selected_id
         st.session_state["awp_id"] = selected_id
         st.session_state["awp_guid"] = selected_id
         st.session_state["aashto_id"] = selected_id
         st.session_state["info_awp_active_id"] = selected_id
 
+        # Populate AWP-backed session_state fields from the loaded attributes.
         _apply_awp_attrs_to_state(attrs)
 
+        # Switch the form below into AASHTOWare (read-only) mode.
         st.session_state["info_option"] = "AASHTOWare Database"
         st.session_state["details_type"] = "AASHTOWare Database"
         st.session_state["is_awp"] = True
 
+        # Record that this selection has been loaded and dismiss the selector.
         st.session_state["info_last_awp_loaded"] = selected_id
         st.session_state["info_awp_attrs"] = attrs
         st.session_state["info_show_awp_selector"] = False
@@ -484,11 +640,13 @@ def _load_awp_by_contract_id_and_switch():
         st.session_state["awp_selector_exclude_ids"] = []
         st.session_state["awp_selector_allow_saved_when_filtered"] = True
 
+        # Bump the form version to force widget rebuilds with fresh defaults.
         st.session_state["form_version"] = st.session_state.get("form_version", 0) + 1
         st.rerun()
 
 def _on_remove_aashtoware_connection():
     """Stage the removal flow; do not persist any update until UPDATE INFORMATION is pressed."""
+    # Load the current project so we can copy its values into editable fields.
     project = _get_project_record() or {}
     _set_pending_source_action("remove_connection")
 
@@ -501,6 +659,9 @@ def _on_remove_aashtoware_connection():
     st.session_state["info_option"] = "User Input"
     st.session_state["is_awp"] = False
 
+    # Copy record values into the editable field keys. This must run here (not
+    # in the centralized read block) because it depends on the freshly loaded
+    # project record obtained above at callback time.
     editable_defaults = {
         "proj_name": project.get("Proj_Name", ""),
         "construction_year": project.get("Construction_Year"),
@@ -528,15 +689,18 @@ def _on_remove_aashtoware_connection():
     for key, value in editable_defaults.items():
         st.session_state[key] = value
 
+    # Bump the form version so widget keys regenerate and pick up defaults.
     st.session_state["form_version"] = st.session_state.get("form_version", 0) + 1
     st.rerun()
 
 
 def _on_reconnect_aashtoware_connection():
     """Stage the reconnect flow; do not persist any update until UPDATE INFORMATION is pressed."""
+    # Turn on AWP display mode and remember which action is pending.
     st.session_state[INFO_AWP_TRIGGER_KEY] = True
     _set_pending_source_action("reconnect")
 
+    # Show the selector with the current project's AWP id preselected.
     project = _get_project_record() or {}
     _show_awp_selector(mode="reconnect")
     _seed_awp_default_from_project(project)
@@ -544,6 +708,7 @@ def _on_reconnect_aashtoware_connection():
 
 def _on_connect_new_aashtoware_connection():
     """Stage the connect-new flow; do not persist any update until UPDATE INFORMATION is pressed."""
+    # Show the selector but exclude the current connection.
     st.session_state[INFO_AWP_TRIGGER_KEY] = True
     _set_pending_source_action("connect_new")
     _show_awp_selector(mode="connect_new")
@@ -552,6 +717,7 @@ def _on_connect_new_aashtoware_connection():
 
 def _on_connect_to_aashtoware_project():
     """Stage the connect flow; do not persist any update until UPDATE INFORMATION is pressed."""
+    # Show the selector in default connect mode for an unlinked project.
     st.session_state[INFO_AWP_TRIGGER_KEY] = True
     _set_pending_source_action("connect")
     _show_awp_selector(mode="connect")
@@ -588,6 +754,7 @@ def _reset_information_form_state_after_update():
         if k in st.session_state:
             del st.session_state[k]
 
+    # Also clear the display-only source markers so they are re-derived on next render.
     for k in ("id_source", "info_last_updated", "info_source"):
         if k in st.session_state:
             del st.session_state[k]
@@ -601,6 +768,7 @@ def _on_update_information(is_awp):
     Action for 'UPDATE INFORMATION' button.
     Shows progress during AGOL deployment and clears it on completion.
     """
+    # Snapshot the pending source action and current field values.
     pending_source_action = st.session_state.get(INFO_PENDING_SOURCE_ACTION_KEY)
     package = _build_information_package(is_awp)
     project_name_package = _build_project_name_payload()
@@ -611,6 +779,8 @@ def _on_update_information(is_awp):
     # Build the AGOL applyEdits payload (updates)
     payload = manage_information_payload(package, 'updates')
 
+    # If the user chose to remove the AASHTOWare connection, null out the
+    # AWP-specific attributes on the project record itself.
     if pending_source_action == "remove_connection":
         updates = payload.get("updates") or []
         if updates:
@@ -620,6 +790,7 @@ def _on_update_information(is_awp):
             attrs["AWP_Proj_Desc"] = None
 
     # Bould Footprint Payload
+    # Resolve the correct footprint layer index based on the project's geometry type.
     proj_type = st.session_state['apex_proj_type']
     if proj_type == "Site":
         footprint_layer = st.session_state['sites_layer']
@@ -664,12 +835,16 @@ def _on_update_information(is_awp):
     except Exception:
         pass
 
+    # Only reset the tab state on a fully successful deployment.
     if isinstance(result, dict) and result.get("success") is True:
         _reset_information_form_state_after_update()
 
 
 
 
+# -----------------------------------------------------------------------------
+# AGOL deployment
+# -----------------------------------------------------------------------------
 def deploy_to_agol_information(
     payload: Dict[str, Any],
     footprint_layer: int,
@@ -693,12 +868,15 @@ def deploy_to_agol_information(
     - Normalizes OBJECTID casing as needed
     """
 
+    # Read AGOL layer configuration from session_state. Kept in-function so a
+    # reconfiguration between reruns is picked up on the next deploy.
     base_url = st.session_state.get("apex_url")
     projects_layer_idx = st.session_state.get("projects_layer")
 
     traffic_impact_url = st.session_state.get("traffic_impact_url")
     traffic_impacts_layer = st.session_state.get("traffic_impacts_layer")
 
+    # Verify configuration before attempting any writes.
     if base_url is None or projects_layer_idx is None:
         st.error("AGOL Projects layer is not configured.")
         return {"success": False, "message": "Projects layer not configured"}
@@ -707,12 +885,14 @@ def deploy_to_agol_information(
         return {"success": False, "message": "Only 'updates' are supported"}
 
     def _progress(frac: float, text: str):
+        """Update the caller-provided progress placeholder, or draw inline."""
         if progress_placeholder is not None:
             progress_placeholder.progress(frac, text=text)
         else:
             st.progress(frac, text=text)
 
     def _normalize_objectid_updates(p: Dict[str, Any]) -> None:
+        """Coerce ``objectId``/``objectid`` variants into the AGOL-expected ``OBJECTID``."""
         if not isinstance(p, dict):
             return
         for rec in p.get("updates", []) or []:
@@ -723,6 +903,7 @@ def deploy_to_agol_information(
                 attrs["OBJECTID"] = attrs.pop("objectid")
 
     def _reject_non_updates(p: Dict[str, Any], label: str) -> Optional[Dict[str, Any]]:
+        """Return an error dict if the payload contains adds/deletes (only updates allowed)."""
         if p.get("adds"):
             return {"success": False, "message": f"{label} payload contains adds"}
         if p.get("deletes"):
@@ -730,6 +911,7 @@ def deploy_to_agol_information(
         return None
 
     def _as_bool(value: Any) -> bool:
+        """Lenient truthiness for session_state values that may be strings/ints/bools."""
         if isinstance(value, bool):
             return value
         if value is None:
@@ -741,6 +923,7 @@ def deploy_to_agol_information(
         return bool(value)
 
     def _coerce_objectid(value: Any) -> Any:
+        """Normalize an OBJECTID candidate to an int when possible."""
         if value is None:
             return None
         if isinstance(value, str):
@@ -763,6 +946,7 @@ def deploy_to_agol_information(
         project_loader = AGOLDataLoader(base_url, projects_layer_idx)
         project_result = project_loader.update_features(payload)
 
+        # If the primary project update fails, abort the remaining steps.
         if project_result.get("success") is False:
             return {
                 "success": False,
@@ -780,6 +964,7 @@ def deploy_to_agol_information(
         footprint_result = None
 
         if footprint_payload.get("updates"):
+            # Only 'updates' are supported here — reject other edit intents.
             err = _reject_non_updates(footprint_payload, "Footprint")
             if err:
                 err["project"] = project_result
@@ -806,6 +991,7 @@ def deploy_to_agol_information(
             footprint_loader = AGOLDataLoader(base_url, footprint_layer)
             footprint_result = footprint_loader.update_features(footprint_payload)
 
+            # Abort on footprint failure and surface the partial results.
             if footprint_result.get("success") is False:
                 return {
                     "success": False,
@@ -912,6 +1098,7 @@ def deploy_to_agol_information(
         # 5) Flagged AWP Update
         # ----------------------------
         flagged_awp_result = None
+        # Only run this side effect when the caller has explicitly flagged it.
         flagged_awp_requested = _as_bool(st.session_state.get("flagged_awp_update"))
 
         if flagged_awp_requested:
@@ -941,6 +1128,7 @@ def deploy_to_agol_information(
                     "flagged_awp": None,
                 }
 
+            # Lazy import: datetime is only needed for this optional side effect.
             from datetime import datetime, timezone
 
             # AGOL Date fields usually expect epoch milliseconds
@@ -979,6 +1167,7 @@ def deploy_to_agol_information(
 
         _progress(1.0, "Done")
 
+        # Aggregated success result across all layers touched.
         return {
             "success": True,
             "project": project_result,
@@ -989,6 +1178,8 @@ def deploy_to_agol_information(
         }
 
     except Exception as e:
+        # Any unhandled exception is captured as a structured failure result so
+        # the UI can render a consistent message and clear its progress bar.
         return {
             "success": False,
             "message": str(e),
@@ -1002,10 +1193,24 @@ def deploy_to_agol_information(
 
 
 
-# -----------------------------------------------------------------------------
+# =============================================================================
 # MAIN ENTRYPOINT
-# -----------------------------------------------------------------------------
+# =============================================================================
 def manage_information():
+    """Render the Manage Project Information tab.
+
+    This is the module's public entry point. It:
+      * Loads the active project record from AGOL.
+      * Determines whether the form is in AASHTOWare or User Input mode.
+      * Seeds User Input defaults from the project record without overwriting
+        any values the user may have already entered.
+      * Renders the Project Data Source summary (or the AASHTOWare selector
+        when a connect/change flow is active).
+      * Renders all Project Information sections (Name, IDs, Funding, Dates,
+        Award, Description, Contact, Web Link) as read-only or editable
+        widgets depending on the current mode.
+      * Renders the UPDATE INFORMATION button and progress placeholder.
+    """
     # Default: show AGOL project record values unless AWP connect/change is active
     st.session_state.setdefault(INFO_AWP_TRIGGER_KEY, False)
     st.markdown("##### MANAGE PROJECT INFORMATION")
@@ -1016,12 +1221,16 @@ def manage_information():
     )   
     st.write("")
 
+    # Fetch the active project; short-circuit render when nothing is loaded.
     project = _get_project_record()
     if not project:
         st.warning("No project loaded.")
         return
 
     # Match details_form mode and key behavior
+    # NOTE: session_state reads for `form_version` and mode resolution stay
+    # here (not centralized) because they may change during the render as a
+    # side effect of AWP loading below.
     version = st.session_state.get("form_version", 0)
     is_awp = _resolve_is_awp(project)
 
@@ -1090,6 +1299,7 @@ def manage_information():
             # After render, if a selection exists, load via CONTRACT_Id and flip form to AWP view
             _load_awp_by_contract_id_and_switch()
         else:
+            # AWP-connected display: show Source / Contract ID / Last Updated.
             if is_awp:
                 c1, c2, c3 = st.columns(3)
                 with c1:
@@ -1111,7 +1321,12 @@ def manage_information():
                         "Last Updated",
                         fmt_agol_date(project.get("EditDate")),
                     )
+
+                ro_widget("info_awp_proj_name", "AASHTOWare Project Name", project.get("AWP_Proj_Name"))
+
+                
             else:
+                # User Input display: only Source and Last Updated.
                 c1, c2 = st.columns(2)
                 with c1:
                     ro_widget(
@@ -1142,6 +1357,7 @@ def manage_information():
         # ---------------------------------------------------------------------
         st.markdown("<h6>1. PROJECT NAME</h6>", unsafe_allow_html=True)
         if is_awp:
+            # Read-only display of the AWP and Public project names.
             c1, c2 = st.columns(2)
             with c1:
                 ro_widget(
@@ -1156,6 +1372,7 @@ def manage_information():
                     fmt_string(_awp_value("proj_name", project, "Proj_Name"))
                 )
         else:
+            # User Input: editable Public Project Name.
             st.session_state["proj_name"] = st.text_input(
                 "Public Project Name ⮜",
                 value=st.session_state.get("proj_name", project.get("Proj_Name", "")),
@@ -1332,6 +1549,7 @@ def manage_information():
         # ---------------------------------------------------------------------
         st.markdown("<h6>5. AWARD INFORMATION</h6>", unsafe_allow_html=True)
         if is_awp:
+            # Read-only award fields sourced from AWP where possible.
             col12, col13 = st.columns(2)
             with col12:
                 ro_widget("award_date", 
@@ -1375,6 +1593,7 @@ def manage_information():
                     )
             
         else:
+            # User Input award fields: fully editable.
             col12, col13 = st.columns(2)
             with col12:
                 st.session_state["award_date"] = st.date_input(
@@ -1404,6 +1623,7 @@ def manage_information():
 
             col15, col16, col17 = st.columns(3)
             with col15:
+                # Resolve the initial value from state, then project, then 0.
                 _val_awarded = st.session_state.get("awarded_amount")
                 if _val_awarded is None:
                     _val_awarded = fmt_int_or_none(project.get("Awarded_Amount"))
@@ -1455,6 +1675,7 @@ def manage_information():
         # ---------------------------------------------------------------------
         st.markdown("<h6>6. DESCRIPTION</h6>", unsafe_allow_html=True)
         if is_awp:
+            # Read-only descriptions: AWP-authored and public-facing.
             ro_widget(
                 "awp_proj_desc",
                 "AASHTOWare Description",
@@ -1468,6 +1689,7 @@ def manage_information():
                 textarea=True,
             )
         else:
+            # Editable public description with a hard character cap.
             st.session_state["proj_desc"] = st.text_area(
                 "Public Description ⮜",
                 height=200,
@@ -1538,6 +1760,9 @@ def manage_information():
                 value=st.session_state.get("proj_web", project.get("Proj_Web", "")),
             )
 
+    # -------------------------------------------------------------------------
+    # Buttons + progress placeholder
+    # -------------------------------------------------------------------------
     information_buttons = st.container(border=False)
     with information_buttons:
         # Update Button

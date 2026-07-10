@@ -61,7 +61,7 @@ def run_loader_app():
 
 
     # Header and progress
-    title_markdown("ADD A NEW APEX PROJECT")
+    title_markdown("APEX APP: ADD APEX PROJECT")
     st.markdown("##### COMPLETE STEPS TO ADD A NEW PROJECT TO THE APEX DATABASE")
     st.progress(st.session_state.loader_step / TOTAL_STEPS)
     st.caption(f"Step {st.session_state.loader_step} of {TOTAL_STEPS}")
@@ -251,7 +251,3 @@ def run_loader_app():
                 st.button("Next ❯", on_click=next_step, disabled=not can_proceed, use_container_width=True, type = 'primary')
 
         st.caption("Use Back and Next to navigate. Refresh will reset this session.")
-
-
-
-
