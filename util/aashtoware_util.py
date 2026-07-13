@@ -190,7 +190,6 @@ def aashtoware_project():
         label="Existing Construction Year(s) in APEX",
         values=st.session_state.get("awp_selected_construction_years", ""),
     )
-    st.write("")  # spacer
 
     # ---------------------------------------------------------------------
     # Load form values when the GUID changes

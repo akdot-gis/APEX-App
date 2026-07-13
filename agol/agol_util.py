@@ -323,8 +323,6 @@ def aashtoware_geometry(awp_contract_id):
         return_geometry=True
     )
 
-    st.session_state['debug'] = geom_sel
-
     for feat in geom_sel or []:
         a = feat.get("attributes", {})
         g = feat.get("geometry", {})
@@ -1228,6 +1226,7 @@ class AGOLDataLoader:
 
         Requirements:
             - Each update feature must include attributes["OBJECTID"].
+            - None values are converted to JSON null to clear fields in AGOL.
 
         Returns:
             dict: { "success": bool, "message": str, "globalids": list }
@@ -1268,12 +1267,16 @@ class AGOLDataLoader:
         self.logger.info("Starting update_features process...")
 
         try:
+            # Convert payload to JSON with explicit null handling for None values
+            updates_json = json.dumps(payload["updates"], allow_nan=False, default=str)
+            self.logger.info("Update payload being sent to AGOL: %s", updates_json)
+            
             resp = requests.post(
                 endpoint,
                 data={
                     "f": "json",
                     "token": self.token,
-                    "updates": json.dumps(payload["updates"])
+                    "updates": updates_json
                 }
             )
 

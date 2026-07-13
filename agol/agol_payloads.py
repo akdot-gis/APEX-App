@@ -82,15 +82,19 @@ from util.input_util import (
 # - Remove sentinel values used to indicate explicit removal ("REMOVE")
 # - Support adds, updates, and deletes sections
 # =============================================================================
-def clean_payload(payload: dict, edit_type = None) -> dict:
+def clean_payload(payload: dict, edit_type=None) -> dict:
     """
     Normalize and clean an ArcGIS applyEdits payload.
 
-    Behavior:
-      - If edit_type is provided, clean only that section.
-      - If edit_type is None, infer from keys present: adds > updates > deletes.
-      - For adds/updates: remove attributes where value is None, 0, "", or "REMOVE".
-      - For deletes: ensure a compact list of valid objectIds.
+    Behavior
+    --------
+    - If edit_type is provided, clean only that section.
+    - If edit_type is None, infer from keys present: adds > updates > deletes.
+    - For adds/updates:
+        - Preserve attributes where value is None so AGOL can set those fields to null.
+        - Remove attributes where value is 0, "", or "REMOVE".
+    - For deletes:
+        - Ensure a compact list of valid objectIds.
 
     Parameters
     ----------
@@ -99,6 +103,7 @@ def clean_payload(payload: dict, edit_type = None) -> dict:
         - {"adds":    [{"attributes": {...}, "geometry": {...}}, ...]}
         - {"updates": [{"attributes": {...}, "geometry": {...}}, ...]}
         - {"deletes": [1, 2, 3]}
+
     edit_type : str | None
         One of "adds", "updates", "deletes", or None to infer.
 
@@ -110,8 +115,9 @@ def clean_payload(payload: dict, edit_type = None) -> dict:
     if not isinstance(payload, dict):
         return payload
 
-    # Infer edit type if not supplied
+    # Infer edit type if not supplied.
     et = (edit_type or "").lower() if isinstance(edit_type, str) else None
+
     if et not in ("adds", "updates", "deletes"):
         if "adds" in payload:
             et = "adds"
@@ -120,47 +126,64 @@ def clean_payload(payload: dict, edit_type = None) -> dict:
         elif "deletes" in payload:
             et = "deletes"
         else:
-            # Nothing recognizable; return as-is
+            # Nothing recognizable; return as-is.
             return payload
 
-    cleaned = dict(payload)  # shallow copy
+    cleaned = dict(payload)  # Shallow copy only.
 
     def _filter_attrs(attrs: dict) -> dict:
+        """
+        Remove values that should not be sent to AGOL while preserving None.
+
+        None values are intentionally kept so they can be serialized as null
+        and used to clear nullable fields in AGOL.
+        """
         if not isinstance(attrs, dict):
             return {}
+
         return {
             k: v
             for k, v in attrs.items()
-            if v is not None and v != "" and v != 0 and v != "REMOVE"
+            if v != "" and v != 0 and v != "REMOVE"
         }
 
     if et in ("adds", "updates"):
         items = []
+
         for rec in payload.get(et, []) or []:
             rec_clean = dict(rec) if isinstance(rec, dict) else {}
-            # Clean attributes
+
+            # Clean attributes while preserving None values.
             rec_clean["attributes"] = _filter_attrs(rec_clean.get("attributes", {}))
-            # Drop empty geometry dicts
+
+            # Drop empty geometry dictionaries.
             geom = rec_clean.get("geometry", None)
             if isinstance(geom, dict) and not geom:
                 rec_clean.pop("geometry", None)
+
             items.append(rec_clean)
+
         cleaned[et] = items
-        # Preserve other sections unmodified if present
+
+        # Preserve other sections unmodified if present.
         for other in ("adds", "updates", "deletes"):
             if other in cleaned and other != et:
                 cleaned[other] = payload.get(other)
+
         return cleaned
 
     if et == "deletes":
         ids = payload.get("deletes", [])
+
         if not isinstance(ids, (list, tuple)):
             ids = [ids]
-        # Keep only truthy, non-empty IDs
+
+        # Keep only non-null, non-empty IDs.
         cleaned_ids = [oid for oid in ids if oid not in (None, "")]
+
         return {"deletes": cleaned_ids}
 
-    # Fallback: return as-is if something unexpected happens
+    # Fallback: return as-is if something unexpected happens.
     return payload
 
 
@@ -919,20 +942,6 @@ def awp_apex_update_payload(awp_id):
         }
 
 
-
-
-
-        # Pull Construction Year Value from Data
-
-        # Scan for existing year in comma seperated list, if not in value list, Skip Step, Value does not need to be added. 
-        
-        # If Not Present then create string with value added ex) CY2026, CY2027
-
-        # Create updates paylod for AGOL RestAPI ApplyEdits method with ConstructionYears field set to new string value
-
-        # Return Package
-
-
     except Exception as e:
         # Bubble up error so caller can handle with st.error
         raise RuntimeError(f"Error building AWP to APEX update payload: {e}")
@@ -1299,7 +1308,6 @@ def manage_information_payload(package_out: dict, edit_type: str) -> dict:
     # Copy source-of-truth attributes
     attrs = dict(package_out)
 
-    
     # -----------------------------
     # OBJECTID handling (updates)
     # -----------------------------
@@ -1335,6 +1343,11 @@ def manage_information_payload(package_out: dict, edit_type: str) -> dict:
         if isinstance(v, (_dt.date, _dt.datetime)):
             attrs[k] = fmt_date(v)
 
+    # 3) Convert empty date strings to None (JSON null) so AGOL doesn't reject them
+    for k in known_date_keys:
+        if k in attrs and attrs[k] == "":
+            attrs[k] = None
+
     # ------------------------------------
     # Numeric coercions for currency/int fields
     # ------------------------------------
@@ -1348,12 +1361,17 @@ def manage_information_payload(package_out: dict, edit_type: str) -> dict:
         if k in attrs:
             attrs[k] = str_to_int(attrs[k])
 
+    # Convert empty numeric strings to None (JSON null)
+    for k in numeric_int_keys:
+        if k in attrs and attrs[k] == "":
+            attrs[k] = None
+
     # -----------------------------
     # Return applyEdits payload
     # -----------------------------
     if et == "updates":
         payload = {"updates": [{"attributes": attrs}]}
-        return clean_payload(payload, "updates")
+        return clean_payload(payload, 'updates')
 
     payload = {"adds": [{"attributes": attrs}]}
     return clean_payload(payload, "adds")

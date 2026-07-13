@@ -18,21 +18,26 @@ displayed text, button labels, and update behavior are preserved exactly.
 # Imports
 # =============================================================================
 
+# Standard library
 from datetime import datetime
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+# Third-party
 import streamlit as st
 
+# Local application: AGOL access and payload builders
 from agol.agol_payloads import manage_deployment_payload
 from agol.agol_util import AGOLDataLoader, select_record
+
+# Local application: Streamlit widget key helper
 from util.input_util import widget_key
 
 
 # =============================================================================
 # Session State Value Access
 # =============================================================================
-#
+
 # This file uses Streamlit session state throughout several functions.
 # Session state reads are intentionally kept inside the functions where they are
 # used because widget state and mirrored deployment values are updated during the
@@ -48,8 +53,7 @@ from util.input_util import widget_key
 # =============================================================================
 
 def _get_project_record():
-    """
-    Fetch the active APEX project record and related child records from AGOL.
+    """Fetch the active APEX project record and related child records from AGOL.
 
     The active project is identified using the current ``apex_guid`` from
     Streamlit session state. The function retrieves the main APEX record from
@@ -59,9 +63,9 @@ def _get_project_record():
 
     Returns:
         dict | None: A nested project record dictionary containing the main APEX
-        attributes and available child record attributes. Returns ``None`` when
-        required configuration values are missing or when no main APEX record is
-        found.
+            attributes and available child record attributes. Returns ``None``
+            when required configuration values are missing or when no main APEX
+            record is found.
     """
     # Pull the current project and layer configuration from session state.
     apex_guid = st.session_state.get("apex_guid")
@@ -124,8 +128,7 @@ def _get_project_record():
 # =============================================================================
 
 def _build_deployment_package() -> dict:
-    """
-    Build the nested deployment package used for AGOL deployment updates.
+    """Build the nested deployment package used for AGOL deployment updates.
 
     The package contains parent APEX deployment values and child packages for
     Location, Site, Route, and Boundary. The main APEX package keeps the existing
@@ -134,7 +137,7 @@ def _build_deployment_package() -> dict:
 
     Returns:
         dict: A nested deployment package containing parent and child deployment
-        update values.
+            update values.
     """
     # Pull the stable mirrored deployment values used by the payload builder.
     base_values = {
@@ -143,15 +146,15 @@ def _build_deployment_package() -> dict:
     }
 
     def _prefixed_package(prefix: str) -> dict:
-        """
-        Build a deployment package using child-layer prefixed field names.
+        """Build a deployment package using child-layer prefixed field names.
 
         Args:
-            prefix (str): The child record prefix used to build field names.
+            prefix (str): The child record prefix used to build deployment field
+                names.
 
         Returns:
             dict: A child deployment package with prefixed database status and
-            target application field names.
+                target application field names.
         """
         # Child deployment fields use layer-specific prefixes.
         return {
@@ -169,8 +172,7 @@ def _build_deployment_package() -> dict:
 
 
 def _get_objectid(record: Optional[dict]) -> Optional[int]:
-    """
-    Return the OBJECTID value from a record attributes dictionary.
+    """Return the OBJECTID value from a record attributes dictionary.
 
     The lookup is case-insensitive so that either ``OBJECTID`` or ``objectid``
     can be detected without changing downstream behavior.
@@ -194,21 +196,20 @@ def _get_objectid(record: Optional[dict]) -> Optional[int]:
 
 
 def _inject_record_objectids(package_out: Dict[str, Any], project: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Attach object IDs from the project record to matching deployment packages.
+    """Attach object IDs from the project record to matching deployment packages.
 
     Each AGOL update package must include the object ID for the record that will
     be updated. This function looks up the object ID from the fetched project
     record and injects it into the corresponding package when available.
 
     Args:
-        package_out (dict): The nested deployment package to update.
-        project (dict): The current project record containing APEX and child
-            record attributes.
+        package_out (Dict[str, Any]): The nested deployment package to update.
+        project (Dict[str, Any]): The current project record containing APEX and
+            child record attributes.
 
     Returns:
-        dict: The same deployment package dictionary with available object IDs
-        injected into matching nested packages.
+        Dict[str, Any]: The same deployment package dictionary with available
+            object IDs injected into matching nested packages.
     """
     # Preserve the original value if the package is not a dictionary.
     if not isinstance(package_out, dict):
@@ -237,20 +238,19 @@ def _inject_record_objectids(package_out: Dict[str, Any], project: Dict[str, Any
 
 
 def _get_active_child_type(project: Dict[str, Any]) -> Optional[str]:
-    """
-    Return the active child record type for the current project.
+    """Return the active child record type for the current project.
 
     The deployment workflow updates only one of Site, Route, or Boundary. This
     function returns the first child type that exists as a dictionary in the
     project record.
 
     Args:
-        project (dict): The current project record containing possible child
-            records.
+        project (Dict[str, Any]): The current project record containing possible
+            child records.
 
     Returns:
         str | None: The active child type name, or ``None`` when no active child
-        record exists.
+            record exists.
     """
     # Only one child type should be active for this deployment update path.
     for child_name in ("Site", "Route", "Boundary"):
@@ -264,8 +264,7 @@ def _build_deployment_update_plan(
     package_out: Dict[str, Any],
     project: Dict[str, Any],
 ) -> List[Tuple[str, int, Dict[str, Any]]]:
-    """
-    Build the per-layer AGOL deployment update plan.
+    """Build the per-layer AGOL deployment update plan.
 
     The update plan determines which deployment packages should be sent to which
     AGOL layers. The parent APEX record is included when it has an object ID,
@@ -273,14 +272,15 @@ def _build_deployment_update_plan(
     record among Site, Route, and Boundary is included when available.
 
     Args:
-        package_out (dict): The nested deployment package with injected object
-            IDs.
-        project (dict): The current project record used to determine the active
-            child record type.
+        package_out (Dict[str, Any]): The nested deployment package with injected
+            object IDs.
+        project (Dict[str, Any]): The current project record used to determine
+            the active child record type.
 
     Returns:
-        list[tuple[str, int, dict]]: A list of update plan entries containing the
-        record name, AGOL layer index, and deployment package for each update.
+        List[Tuple[str, int, Dict[str, Any]]]: A list of update plan entries
+            containing the record name, AGOL layer index, and deployment package
+            for each update.
     """
     # Pull the layer indexes needed to route each package to the correct AGOL layer.
     layer_map = {
@@ -325,22 +325,23 @@ def _deploy_to_agol_deployment(
     edit_type: str,
     layer_idx: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """
-    Submit a deployment update payload to the configured AGOL layer.
+    """Submit a deployment update payload to the configured AGOL layer.
 
     Args:
-        payload (dict): The AGOL feature update payload to submit.
+        payload (Dict[str, Any]): The AGOL feature update payload to submit.
         edit_type (str): The edit type supplied by the caller. This parameter is
             preserved for existing function signature compatibility.
         layer_idx (int | None): Optional AGOL layer index. When not provided,
             the configured projects layer from session state is used.
 
     Returns:
-        dict: The result returned by ``AGOLDataLoader.update_features``. Returns
-        ``{"success": False}`` when required AGOL configuration is missing.
+        Dict[str, Any]: The result returned by ``AGOLDataLoader.update_features``.
+            Returns ``{"success": False}`` when required AGOL configuration is
+            missing.
     """
     # Pull the AGOL service URL and fallback layer index from session state.
     base_url = st.session_state.get("apex_url")
+
     if layer_idx is None:
         layer_idx = st.session_state.get("projects_layer")
 
@@ -361,8 +362,7 @@ def _deploy_to_agol_deployment(
 # =============================================================================
 
 def _seed_database_defaults(project: dict, version: str, is_awp: bool, *, force: bool = False):
-    """
-    Seed deployment widget defaults from the AGOL project record.
+    """Seed deployment widget defaults from the AGOL project record.
 
     Defaults are pulled from the parent APEX record only. ``Database_Status`` is
     used for the single-value selectbox, and ``Target_Applications`` is parsed
@@ -378,7 +378,7 @@ def _seed_database_defaults(project: dict, version: str, is_awp: bool, *, force:
             values from the project record.
 
     Returns:
-        None
+        None.
     """
     # Read the parent APEX record attributes used to seed widget defaults.
     apex_record = project.get("apex", {}) if isinstance(project, dict) else {}
@@ -428,8 +428,7 @@ def _seed_database_defaults(project: dict, version: str, is_awp: bool, *, force:
 # =============================================================================
 
 def manage_deployment():
-    """
-    Render and manage the Project Deployment tab.
+    """Render and manage the Project Deployment tab.
 
     The function retrieves the active project record, seeds deployment widget
     defaults when needed, renders the deployment status and target application
@@ -437,8 +436,12 @@ def manage_deployment():
     payload builder, and handles the AGOL deployment update button workflow.
 
     Returns:
-        None
+        None.
     """
+    # -------------------------------------------------------------------------
+    # Load Active Project
+    # -------------------------------------------------------------------------
+
     # Retrieve the active project before rendering deployment controls.
     project = _get_project_record()
     if not project:
@@ -480,7 +483,7 @@ def manage_deployment():
     st.session_state["database_status"] = st.session_state.get(status_key)
     st.session_state["target_applications"] = st.session_state.get(target_key)
 
-    st.write('')
+    st.write("")
 
     clicked = st.button(
         "UPDATE DEPLOYMENT",

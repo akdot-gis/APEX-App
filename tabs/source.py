@@ -14,13 +14,14 @@ fields, and execution behavior are intentionally preserved.
 # =============================================================================
 # Imports
 # =============================================================================
+
 # Standard library
 from typing import Any, Dict, Optional
 
 # Third-party
 import streamlit as st
 
-# Local application: AGOL access + payload builders
+# Local application: AGOL access and payload builders
 from agol.agol_payloads import (
     manage_information_payload,
     manage_project_name_update,
@@ -30,7 +31,7 @@ from agol.agol_util import (
     select_record,
 )
 
-# Local application: AASHTOWare connection UI + formatting + read-only widgets
+# Local application: AASHTOWare connection UI, formatting, and read-only widgets
 from util.aashtoware_util import manage_aashtoware_connection
 from util.input_util import fmt_agol_date
 from util.read_only_util import ro_widget
@@ -39,6 +40,7 @@ from util.read_only_util import ro_widget
 # =============================================================================
 # Constants
 # =============================================================================
+
 # Session-state flag used across the Source and Information tabs to indicate
 # that the user is actively inside a connect/change AASHTOWare flow. Consumers
 # elsewhere in the app rely on this key name, so it must not be renamed.
@@ -48,6 +50,7 @@ INFO_AWP_TRIGGER_KEY = "info_awp_trigger_active"
 # =============================================================================
 # Session State Access Notes
 # =============================================================================
+
 # This file reads and mutates Streamlit session state throughout callback and UI
 # execution. Reads intentionally remain near their original usage points because
 # several values are updated later in the same request cycle, and centralizing
@@ -55,12 +58,13 @@ INFO_AWP_TRIGGER_KEY = "info_awp_trigger_active"
 
 
 # =============================================================================
-# HELPER FUNCTIONS
+# Helper Functions
 # =============================================================================
 
 # -----------------------------------------------------------------------------
 # Active Project Helpers
 # -----------------------------------------------------------------------------
+
 def _get_project_record():
     """Return the active AGOL project record attributes for the current APEX GUID.
 
@@ -73,6 +77,7 @@ def _get_project_record():
     apex_guid = st.session_state.get("apex_guid")
     url = st.session_state.get("apex_url")
     layer = st.session_state.get("projects_layer")
+
     if not (apex_guid and url and layer is not None):
         return None
 
@@ -85,16 +90,22 @@ def _get_project_record():
         fields="*",
         return_geometry=False,
     )
+
     return recs[0]["attributes"] if recs else None
 
 
 def _sync_manage_existing_id_from_project(project: dict):
-    """
-    Keep the manage-selector's 'current APEX connection' marker aligned with the
-    AWP_Contract_ID that is actually saved on the AGOL project record.
+    """Synchronize the manage-selector marker with the committed AGOL AWP ID.
+
+    Args:
+        project (dict): Active AGOL project attributes.
+
+    Returns:
+        None: Session state is updated in place.
     """
     project = project or {}
-    # The "committed" AWP id is whatever is currently persisted on the AGOL record.
+
+    # The committed AWP id is whatever is currently persisted on the AGOL record.
     committed_awp_id = project.get("AWP_Contract_ID") or None
 
     # Store the committed AGOL connection marker used by the manage selector.
@@ -111,41 +122,35 @@ def _sync_manage_existing_id_from_project(project: dict):
 # -----------------------------------------------------------------------------
 # Data Source Mode Helpers
 # -----------------------------------------------------------------------------
-def manage_source():
-    """Render and manage the Source tab for the active Streamlit project.
-
-    This function preserves the existing Source tab workflow, including source
-    summary rendering, AASHTOWare connection controls, read-only widget handling,
-    and update/remove action routing.
-
-    Returns:
-        None: Streamlit components are rendered directly to the page.
-    """
-    # NOTE: The setdefault calls here reflect existing behavior for first-load
-    # defaults and are left unchanged. They only create keys if they do not
-    # already exist; they never overwrite user- or workflow-provided values.
-    st.session_state.setdefault(INFO_AWP_TRIGGER_KEY, False)
-    st.session_state.setdefault("awp_manage_show_details", False)
-    st.session_state.setdefault("awp_selection_made", False)
-
 
 def _resolve_is_awp(project_attrs: dict) -> bool:
+    """Resolve whether the active project should render as AASHTOWare-backed.
+
+    Args:
+        project_attrs (dict): Active AGOL project attributes.
+
+    Returns:
+        bool: True when the active source is AASHTOWare Database; otherwise, False.
     """
-    Prefer the active source selection from session state, otherwise fall back to
-    the current AGOL record.
-    """
-    # An active user selection (from this session) always wins over the record.
+    # An active user selection from this session always wins over the saved record.
     details_type = st.session_state.get("details_type") or st.session_state.get("info_option")
+
     # Respect the active source selection before falling back to saved AGOL data.
     if details_type in ("AASHTOWare Database", "User Input"):
         return details_type == "AASHTOWare Database"
+
     return bool((project_attrs or {}).get("AWP_Contract_ID"))
 
 
 def _current_awp_contract_id(project: dict):
-    """
-    Show the currently selected AASHTOWare contract while connect/change is active,
-    otherwise show the contract already saved on the AGOL project record.
+    """Return the AASHTOWare contract ID to display in the Source tab.
+
+    Args:
+        project (dict): Active AGOL project attributes.
+
+    Returns:
+        Any: The staged selector contract ID during connect/change mode, or the
+            committed AGOL contract ID outside the connection workflow.
     """
     project = project or {}
 
@@ -182,6 +187,7 @@ def _clear_manage_awp_state():
         "info_show_awp_selector",
         "awp_manage_existing_id",
     }
+
     # Remove all transient awp_manage_* keys not on the keep list.
     for key in list(st.session_state.keys()):
         if key.startswith("awp_manage_") and key not in keep_keys:
@@ -198,19 +204,28 @@ def _clear_manage_awp_state():
 
 
 def _show_awp_selector():
-    """
-    Flip session flags so the source summary is hidden and the manage AWP selector shows.
+    """Show the manage AASHTOWare selector and hide the source summary.
+
+    Returns:
+        None: Session flags are updated in place.
     """
     st.session_state["info_show_awp_selector"] = True
     st.session_state["awp_manage_show_details"] = True
 
 
 def _seed_awp_manage_default_from_project(project: dict):
-    """
-    Seed the manage AASHTOWare selector from the current project's saved contract id.
+    """Seed the manage AASHTOWare selector from the current project record.
+
+    Args:
+        project (dict): Active AGOL project attributes.
+
+    Returns:
+        None: Selector-related session values are updated in place when a saved
+            contract ID exists.
     """
     project = project or {}
     awp_contract_id = project.get("AWP_Contract_ID")
+
     # Only seed when the project actually carries a saved contract id.
     if awp_contract_id:
         st.session_state["awp_manage_id"] = awp_contract_id
@@ -220,12 +235,12 @@ def _seed_awp_manage_default_from_project(project: dict):
 # -----------------------------------------------------------------------------
 # Selected AASHTOWare Helpers
 # -----------------------------------------------------------------------------
+
 def _get_selected_manage_awp_id() -> Optional[str]:
-    """
-    Return the currently selected AASHTOWare project identifier.
+    """Return the currently selected AASHTOWare project identifier.
 
     Returns:
-        str | None: The first available selected AASHTOWare identifier from the
+        Optional[str]: The first available selected AASHTOWare identifier from the
             existing session state key sequence, or None when no identifier is set.
     """
     # Maintain the existing priority order across possible selector state keys.
@@ -237,16 +252,22 @@ def _get_selected_manage_awp_id() -> Optional[str]:
         or st.session_state.get("awp_guid")
         or st.session_state.get("aashto_id")
     )
+
     if selected_id in (None, ""):
         return None
+
     return str(selected_id)
 
 
 def _get_selected_manage_awp_attrs() -> Dict[str, Any]:
-    """
-    Resolve the currently selected AASHTOWare project's attributes from session.
-    This supports the existing manage_aashtoware_connection() flow without changing
-    that utility.
+    """Resolve the currently selected AASHTOWare project's attributes from session.
+
+    This supports the existing ``manage_aashtoware_connection()`` flow without
+    changing that utility.
+
+    Returns:
+        Dict[str, Any]: Attribute dictionary for the selected AASHTOWare project,
+            or an empty dictionary when no attributes can be resolved.
     """
     # First inspect structured records already captured by the selector workflow.
     candidates = [
@@ -264,6 +285,7 @@ def _get_selected_manage_awp_attrs() -> Dict[str, Any]:
             return candidate
 
     attrs: Dict[str, Any] = {}
+
     # Fall back to individual session state fields populated by existing utilities.
     fallback_map = {
         "Id": ["awp_manage_id", "awp_manage_guid", "apex_awp_id"],
@@ -281,8 +303,16 @@ def _get_selected_manage_awp_attrs() -> Dict[str, Any]:
         "AwardFiscalYear": ["awp_manage_award_fiscal_year", "awp_award_fiscal_year", "award_fiscal_year"],
         "TentativeAdvertiseDate": ["awp_manage_tenadd", "awp_tenadd", "tenadd"],
         "AwardedAmount": ["awp_manage_awarded_amount", "awp_awarded_amount", "awarded_amount"],
-        "CurrentContractAmount": ["awp_manage_current_contract_amount", "awp_current_contract_amount", "current_contract_amount"],
-        "AmountPaidToDate": ["awp_manage_amount_paid_to_date", "awp_amount_paid_to_date", "amount_paid_to_date"],
+        "CurrentContractAmount": [
+            "awp_manage_current_contract_amount",
+            "awp_current_contract_amount",
+            "current_contract_amount",
+        ],
+        "AmountPaidToDate": [
+            "awp_manage_amount_paid_to_date",
+            "awp_amount_paid_to_date",
+            "amount_paid_to_date",
+        ],
         "Contractor": ["awp_manage_contractor", "contractor"],
         "ContactName": ["awp_manage_contact_name", "awp_contact_name", "contact_name"],
         "ContactEmail": ["awp_manage_contact_email", "awp_contact_email", "contact_email"],
@@ -315,16 +345,23 @@ def _selected_awp_value(attrs: Dict[str, Any], *names: str):
     for name in names:
         if name in attrs and attrs.get(name) not in (None, ""):
             return attrs.get(name)
+
     return None
 
 
 # -----------------------------------------------------------------------------
 # Payload Builders and AGOL Deployment Helpers
 # -----------------------------------------------------------------------------
+
 def _build_selected_awp_information_package(selected_awp_id: str, attrs: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Build the same package shape used by the old Information flow, but sourced
-    from the currently selected AASHTOWare project in the source-management flow.
+    """Build the Information payload package for the selected AASHTOWare project.
+
+    Args:
+        selected_awp_id (str): Selected AASHTOWare contract identifier.
+        attrs (Dict[str, Any]): Selected AASHTOWare attribute dictionary.
+
+    Returns:
+        Dict[str, Any]: Package shaped for the existing Information update flow.
     """
     # Preserve the payload field names expected by the existing Information flow.
     return {
@@ -385,6 +422,7 @@ def _normalize_objectid_updates(payload: Dict[str, Any]) -> None:
     # Ignore non-dictionary payloads to match the defensive existing behavior.
     if not isinstance(payload, dict):
         return
+
     # AGOL requires the OBJECTID key in a specific casing; rewrite variants in place.
     for rec in payload.get("updates", []) or []:
         attrs = rec.get("attributes", {})
@@ -473,7 +511,15 @@ def deploy_to_agol_source_connection(
         return {"success": False, "message": "Projects layer not configured"}
 
     def _progress(frac: float, text: str):
-        """Update the caller-provided progress placeholder, or draw inline."""
+        """Update the caller-provided progress placeholder, or draw inline.
+
+        Args:
+            frac (float): Progress fraction passed to Streamlit.
+            text (str): Progress text displayed beside the progress bar.
+
+        Returns:
+            None.
+        """
         if progress_placeholder is not None:
             progress_placeholder.progress(frac, text=text)
         else:
@@ -489,18 +535,21 @@ def deploy_to_agol_source_connection(
 
     # Count only steps that will actually issue updates so the progress bar is accurate.
     total_steps = sum(1 for _, _, p in steps if _payload_has_updates(p))
+
     if total_steps == 0:
         return {"success": True, "message": "Nothing to update"}
 
     completed_steps = 0
+
     for message, loader, step_payload in steps:
         # Skip steps whose payload contains no updates.
         if not _payload_has_updates(step_payload):
             continue
 
-        # This deploy path supports only 'updates'; reject adds/deletes explicitly.
+        # This deploy path supports only updates; reject adds/deletes explicitly.
         if step_payload.get("adds"):
             return {"success": False, "message": f"Unexpected adds found for step: {message}"}
+
         if step_payload.get("deletes"):
             return {"success": False, "message": f"Unexpected deletes found for step: {message}"}
 
@@ -529,15 +578,24 @@ def _sync_manager_project_header_after_source_update(
     selected_awp_id: Optional[str],
     selected_awp_attrs: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """
-    Keep the manager page header in sync after the Source tab updates the project.
+    """Keep the manager page header in sync after the Source tab updates the project.
 
     The manager header is built from cached project list/session values. When the
     Source tab changes the AASHTOWare source, Proj_Name can also be updated in
     AGOL. Without refreshing these values, the old project name can remain at the
     top of the app until the app cache is cleared or a different project is loaded.
+
+    Args:
+        selected_awp_id (Optional[str]): Selected AASHTOWare contract identifier,
+            or None when the source connection is being cleared.
+        selected_awp_attrs (Optional[Dict[str, Any]]): Selected AASHTOWare
+            attribute dictionary used to refresh cached project-name values.
+
+    Returns:
+        None.
     """
     selected_awp_attrs = selected_awp_attrs or {}
+
     # Resolve the best available project name from the incoming AWP attributes.
     updated_project_name = _selected_awp_value(
         selected_awp_attrs,
@@ -551,7 +609,7 @@ def _sync_manager_project_header_after_source_update(
         st.session_state["apex_proj_name"] = updated_project_name
         st.session_state["apex_awp_name"] = updated_project_name
 
-    # Reflect the new committed contract id (or clear it) into shared state.
+    # Reflect the new committed contract id, or clear it, into shared state.
     if selected_awp_id:
         st.session_state["apex_awp_id"] = selected_awp_id
         st.session_state["awp_manage_existing_id"] = selected_awp_id
@@ -613,6 +671,7 @@ def _reset_source_state_after_update(
 # -----------------------------------------------------------------------------
 # Streamlit Action Handlers
 # -----------------------------------------------------------------------------
+
 def _on_change_aashtoware_connection():
     """Prepare the Source tab to change the current AASHTOWare connection.
 
@@ -621,6 +680,7 @@ def _on_change_aashtoware_connection():
             flow.
     """
     st.session_state[INFO_AWP_TRIGGER_KEY] = True
+
     # Refresh the committed project record before changing selector state.
     project = _get_project_record() or {}
     _sync_manage_existing_id_from_project(project)
@@ -637,6 +697,7 @@ def _on_connect_to_aashtoware_project():
             flow.
     """
     st.session_state[INFO_AWP_TRIGGER_KEY] = True
+
     # Load the project so we can preseed the selector with its committed id.
     project = _get_project_record() or {}
     _sync_manage_existing_id_from_project(project)
@@ -646,9 +707,12 @@ def _on_connect_to_aashtoware_project():
 
 
 def _on_cancel_aashtoware_connection():
-    """
-    Reset the source tab back to its original state and keep the Source tab selected.
-    This should mirror the other source actions by restoring the committed project state.
+    """Reset the Source tab back to its original state and keep the tab selected.
+
+    This mirrors the other source actions by restoring the committed project state.
+
+    Returns:
+        None.
     """
     project = _get_project_record() or {}
     committed_awp_id = project.get("AWP_Contract_ID") or None
@@ -672,13 +736,12 @@ def _on_cancel_aashtoware_connection():
     st.session_state["source_connection_updated"] = True
 
 
-
 def _on_update_aashtoware_connection():
     """Update the active project with the selected AASHTOWare connection.
 
     Returns:
-        None: Success and error messages are rendered directly through Streamlit, and
-            related session state values are updated by the existing workflow.
+        None: Success and error messages are rendered directly through Streamlit,
+            and related session state values are updated by the existing workflow.
     """
     project = _get_project_record() or {}
     selected_awp_id = _get_selected_manage_awp_id()
@@ -712,8 +775,8 @@ def _on_update_aashtoware_connection():
 
     # Convert the Information package into an AGOL applyEdits payload.
     payload = manage_information_payload(package, "updates")
-
     proj_type = st.session_state.get("apex_proj_type")
+
     # Route footprint updates to the layer that matches the active project type.
     if proj_type == "Site":
         footprint_layer = st.session_state["sites_layer"]
@@ -768,7 +831,7 @@ def _on_update_aashtoware_connection():
         progress_placeholder=progress_ph,
     )
 
-    # Clear the progress bar after completion (success or failure).
+    # Clear the progress bar after completion, success or failure.
     try:
         if progress_ph is not None:
             progress_ph.empty()
@@ -777,12 +840,15 @@ def _on_update_aashtoware_connection():
 
     # Only reset the Source tab state on a fully successful deployment.
     if isinstance(result, dict) and result.get("success") is True:
-       _reset_source_state_after_update(selected_awp_id, selected_awp_attrs)
+        _reset_source_state_after_update(selected_awp_id, selected_awp_attrs)
 
 
 def _on_remove_aashtoware_connection():
-    """
-    Remove the AASHTOWare linkage from the AGOL project record.
+    """Remove the AASHTOWare linkage from the AGOL project record.
+
+    Returns:
+        None: AGOL edit results and related UI messages are handled directly through
+            Streamlit and session state.
     """
     project = _get_project_record() or {}
     base_url = st.session_state.get("apex_url")
@@ -861,6 +927,7 @@ def _on_remove_aashtoware_connection():
 # =============================================================================
 # Streamlit Page Rendering
 # =============================================================================
+
 def manage_source():
     """Render and manage the Source tab for the active Streamlit project.
 
@@ -877,9 +944,9 @@ def manage_source():
     st.session_state.setdefault(INFO_AWP_TRIGGER_KEY, False)
     st.session_state.setdefault("awp_manage_show_details", False)
 
-    # ---------------------------------------------------------------------
+    # -------------------------------------------------------------------------
     # Header
-    # ---------------------------------------------------------------------
+    # -------------------------------------------------------------------------
     st.markdown("##### MANAGE PROJECT DATA SOURCE")
     st.caption(
         "Connect, update, change, or remove the project’s data source for the APEX. "
@@ -888,10 +955,11 @@ def manage_source():
     )
     st.write("")
 
-    # ---------------------------------------------------------------------
-    # Load active project; short-circuit render when nothing is loaded.
-    # ---------------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Load Active Project
+    # -------------------------------------------------------------------------
     project = _get_project_record()
+
     if not project:
         st.warning("No project loaded.")
         return
@@ -904,12 +972,13 @@ def manage_source():
     staged_awp_id = _current_awp_contract_id(project) or ""
 
     # =========================================================================
-    # PROJECT DATA SOURCE SECTION
+    # Project Data Source Section
     # =========================================================================
     st.markdown("###### PROJECT DATA SOURCE")
+
     with st.container(border=True):
         # ---------------------------------------------------------------------
-        # Selector mode: the user has pressed CONNECT / CHANGE
+        # Selector Mode: User Pressed CONNECT or CHANGE
         # ---------------------------------------------------------------------
         if st.session_state.get("info_show_awp_selector", False):
             st.markdown("###### SELECT AASHTOWARE PROJECT", unsafe_allow_html=True)
@@ -921,10 +990,10 @@ def manage_source():
             if not any(st.session_state.get(k) for k in ("awp_manage_id", "awp_manage_guid")):
                 _seed_awp_manage_default_from_project(project)
 
-            # Display AASHTOWARE Project List
+            # Display AASHTOWARE Project List.
             manage_aashtoware_connection()
 
-            # Always show the selector; only show the action button after a fresh selection is made
+            # Always show the selector; only show the action button after a fresh selection is made.
             selected_awp_id = _get_selected_manage_awp_id()
             selected_awp_attrs = _get_selected_manage_awp_attrs()
 
@@ -942,9 +1011,30 @@ def manage_source():
                 st.session_state["source_progress_placeholder"] = st.empty()
 
                 reconnect_update_container = st.container()
+
                 with reconnect_update_container:
-                        # Pre-selection state: only CANCEL is available.
-                        if st.session_state.get('awp_selection_made') == False:
+                    # Pre-selection state: only CANCEL is available.
+                    if st.session_state.get("awp_selection_made") == False:
+                        st.button(
+                            "CANCEL",
+                            use_container_width=True,
+                            type="primary",
+                            on_click=_on_cancel_aashtoware_connection,
+                        )
+
+                    # Post-selection state: show UPDATE/RE-CONNECT and CANCEL.
+                    elif st.session_state.get("awp_selection_made") == True:
+                        btn1, btn2 = st.columns(2)
+
+                        with btn1:
+                            st.button(
+                                button_label,
+                                use_container_width=True,
+                                type="primary",
+                                on_click=_on_update_aashtoware_connection,
+                            )
+
+                        with btn2:
                             st.button(
                                 "CANCEL",
                                 use_container_width=True,
@@ -952,60 +1042,48 @@ def manage_source():
                                 on_click=_on_cancel_aashtoware_connection,
                             )
 
-                        # Post-selection state: show UPDATE/RE-CONNECT and CANCEL.
-                        elif st.session_state.get('awp_selection_made') == True:
-                            btn1, btn2 = st.columns(2)
-
-                            with btn1:
-                                st.button(
-                                    button_label,
-                                    use_container_width=True,
-                                    type="primary",
-                                    on_click=_on_update_aashtoware_connection,
-                                )
-
-                            with btn2:
-                                st.button(
-                                    "CANCEL",
-                                    use_container_width=True,
-                                    type="primary",
-                                    on_click=_on_cancel_aashtoware_connection,
-                                )
             # Selector mode owns the tab; skip the summary/action rendering below.
             return
 
-
         # ---------------------------------------------------------------------
-        # Summary mode: show the current data source read-only
+        # Summary Mode: Show Current Data Source Read-Only
         # ---------------------------------------------------------------------
         if is_awp:
             # AWP-connected: display Source / Contract ID / Last Updated + AWP name.
             c1, c2, c3 = st.columns(3)
+
             with c1:
                 ro_widget("info_source", "Source", "AASHTOWare")
+
             with c2:
                 ro_widget("id_source", "Contract ID", staged_awp_id)
+
             with c3:
                 ro_widget("info_last_updated", "Last Updated", fmt_agol_date(project.get("EditDate")))
-            ro_widget("info_awp_proj_name", "AASHTOWare Project Name", project.get("AWP_Proj_Name"))
-            st.write("")
+
+            ro_widget("info_awp_proj_name", "AASHTOWare Project Name", project.get("AWP_Proj_Name")) 
+
         else:
             # User Input: only Source and Last Updated are shown.
             c1, c2 = st.columns(2)
+
             with c1:
                 ro_widget("info_source", "Source", "User Input")
+
             with c2:
                 ro_widget("info_last_updated", "Last Updated", fmt_agol_date(project.get("EditDate")))
-            st.write("")
+
 
         # ---------------------------------------------------------------------
-        # Action buttons
+        # Action Buttons
         # ---------------------------------------------------------------------
         if is_awp:
             # Two possible workflows: change the connection, or remove it.
             actions_container = st.empty()
+
             with actions_container.container():
                 col_src1, col_src2 = st.columns(2, gap="small")
+
                 with col_src1:
                     change_connection = st.button(
                         "RE-CONNECT/CHANGE CONNECTION",
@@ -1022,34 +1100,35 @@ def manage_source():
                     remove = st.button(
                         "REMOVE CONNECTION",
                         use_container_width=True,
-                        type="primary"
+                        type="primary",
                     )
 
                     # First click surfaces a two-step confirm/cancel row.
                     if remove:
                         actions_container.empty()
+
                         with actions_container.container():
                             btn3, btn4 = st.columns(2)
 
                             with btn3:
                                 confirm_remove = st.button(
-                                "CONFIRM REMOVE CONNECTION?",
-                                key="confirm_remove_btn",
-                                use_container_width=True,
-                                type="primary",
-                                on_click=_on_remove_aashtoware_connection
-                            )
+                                    "CONFIRM REMOVE CONNECTION?",
+                                    key="confirm_remove_btn",
+                                    use_container_width=True,
+                                    type="primary",
+                                    on_click=_on_remove_aashtoware_connection,
+                                )
 
                                 if confirm_remove:
                                     st.rerun()
 
                             with btn4:
                                 st.button(
-                                "CANCEL",
-                                use_container_width=True,
-                                type="primary",
-                                on_click=_on_cancel_aashtoware_connection,
-                            )
+                                    "CANCEL",
+                                    use_container_width=True,
+                                    type="primary",
+                                    on_click=_on_cancel_aashtoware_connection,
+                                )
 
         else:
             # No connection yet: single CTA to begin the connect flow.
